@@ -83,6 +83,18 @@ function executeVu(vu, reject = false) {
   compiled.runInNewContext(sandbox);
 }
 
+// Regression: end-of-test summary may evaluate this module AFTER BURST_AT.
+// The timestamp must not cause an import-time exception in that context.
+const postBurstDate = class extends Date { static now() { return targetTime + 30000; } };
+const summaryModule = new vm.Script(source + '\noptions.scenarios.answer_burst.vus;', {
+  filename: 'k6-burst-1000.js (summary context)',
+});
+assert.doesNotThrow(() => summaryModule.runInNewContext({
+  __ENV: { USERS: '1000', BURST_AT: '2099-02-01T00:00:00Z', BOOTSTRAP_SPREAD_SEC: '0' },
+  Date: postBurstDate, Rate: class { add() {} }, Number, String, Math, JSON, Array,
+  http: {}, sleep: () => {}, exec: { vu: { idInTest: 1 } }, console,
+}), 'End-of-test summary must be constructible after BURST_AT has elapsed');
+
 for (let i = 1; i <= 1000; i++) executeVu(i, i === firstRejectedVU);
 assert.equal(allNims.size, 1000, 'Each VU must use a unique student');
 assert.equal(putCount, 1000, 'One answer submission per VU');

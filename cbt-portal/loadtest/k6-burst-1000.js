@@ -15,8 +15,12 @@ const TOLERANCE_MS = Number(__ENV.TOLERANCE_MS || 2000);
 if (!Number.isInteger(USERS) || USERS < 1 || USERS > 9999) throw new Error('USERS must be 1..9999');
 if (!Number.isInteger(USER_OFFSET) || USER_OFFSET < 0 || USER_OFFSET + USERS > 9999) throw new Error('Invalid USER_OFFSET/USERS partition');
 if (!Number.isFinite(BOOTSTRAP_SPREAD_SEC) || BOOTSTRAP_SPREAD_SEC < 0 || BOOTSTRAP_SPREAD_SEC > 240) throw new Error('BOOTSTRAP_SPREAD_SEC must be 0..240');
-if (!Number.isFinite(BURST_AT) || BURST_AT <= Date.now()) {
-  throw new Error('BURST_AT must be a future ISO-8601 timestamp (allow 3-5 minutes for warmup)');
+// Validate the format during module initialization, not the current clock.
+// k6 may load this module again when generating the end-of-test summary,
+// after BURST_AT has naturally passed. A time-dependent init check would
+// cause the summary export to fail even if all HTTP requests succeeded.
+if (!Number.isFinite(BURST_AT)) {
+  throw new Error('BURST_AT must be a valid ISO-8601 timestamp');
 }
 
 const warmupOk = new Rate('burst_warmup_ok');
@@ -46,6 +50,15 @@ const call = (method, path, payload, name, phase) =>
   });
 
 export default function () {
+  // Validate at iteration start, when running the actual test. This guard
+  // is never executed by the end-of-test summary collector.
+  if (BURST_AT <= Date.now()) {
+    if (exec.vu.idInTest <= 5) {
+      console.error('[CBT PREFLIGHT] BURST_AT has already passed before VU startup; schedule a future UTC burst.');
+    }
+    warmupOk.add(false); onTime.add(false); submitOk.add(false); verifyOk.add(false);
+    return;
+  }
   const nim = 'LT' + String(USER_OFFSET + exec.vu.idInTest).padStart(4, '0');
   // Spread login/start/questions over ~90 sec so the synchronized test
   // measures 1,000 autosave writes, not 1,000 bcrypt logins at once.

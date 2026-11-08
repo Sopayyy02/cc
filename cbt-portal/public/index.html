@@ -48,8 +48,8 @@ button:focus-visible{outline:3px solid #7fb8c4;outline-offset:2px}
     <h1>Portal Ujian CBT</h1>
     <p class="mut">Masuk dengan NIM dan password Anda.</p>
     <form id="loginForm">
-      <label>NIM<input id="nim" autocomplete="username" value="2024001"></label>
-      <label>Password<input id="pw" type="password" autocomplete="current-password" value="password123"></label>
+      <label>NIM<input id="nim" autocomplete="username" placeholder="Masukkan NIM"></label>
+      <label>Password<input id="pw" type="password" autocomplete="current-password" placeholder="Masukkan password"></label>
       <div id="err"></div>
       <button class="btn" type="submit">Masuk</button>
     </form>
@@ -81,7 +81,7 @@ button:focus-visible{outline:3px solid #7fb8c4;outline-offset:2px}
 
 <script>
 const $ = (s) => document.querySelector(s);
-const S = { q: [], ans: {}, sid: null, sisa: 0, cur: 0, queue: {}, flushing: false, exam: null, timer: null, beat: null };
+const S = { q: [], ans: {}, sid: null, sisa: 0, cur: 0, queue: {}, flushing: false, exam: null, timer: null, beat: null, finishing: false, finishOnSave: false, autoFinishAttempted: false };
 const esc = (t) => String(t).replace(/[&<>"]/g, (c) => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;' }[c]));
 const show = (id) => ['login', 'exam', 'result'].forEach((x) => $('#' + x).classList.toggle('hide', x !== id));
 
@@ -102,27 +102,52 @@ function setStatus(kind, text) { const s = $('#status'); s.className = kind; s.t
 const qKey = () => 'pending_' + S.sid;
 const persist = () => localStorage.setItem(qKey(), JSON.stringify(S.queue));
 
-// Antrean jawaban: disimpan di localStorage, dikirim ulang sampai server menerima.
+// Queue entries are removed ONLY after a successful, structured MySQL ACK.
+// 429 (gateway throttling), 5xx, and network failure leave the answer intact.
+// A permanent 4xx also leaves it intact for manual recovery.
 async function flush() {
-  if (S.flushing) return;
+  if (S.flushing || !S.sid) return;
   S.flushing = true;
   let retry = false;
+  let rejected = false;
   try {
     for (const qid of Object.keys(S.queue)) {
-      const p = S.queue[qid];
-      const r = await api(`/api/sessions/${S.sid}/answers`, { method: 'PUT', body: { question_id: +qid, pilihan: p } });
-      if (r.ok) { if (S.queue[qid] === p) delete S.queue[qid]; persist(); }
-      else if (r.status === 401) { return goLogin('Sesi login berakhir. Silakan masuk lagi.'); }
-      else if (r.status >= 500) { throw new Error('server'); }
-      else { delete S.queue[qid]; persist(); setStatus('err', (r.data && r.data.error) || 'Jawaban ditolak'); }
+      const choice = S.queue[qid];
+      const r = await api(`/api/sessions/${S.sid}/answers`, {
+        method: 'PUT', body: { question_id: +qid, pilihan: choice },
+      });
+      if (r.ok && r.data?.status === 'saved') {
+        if (S.queue[qid] === choice) delete S.queue[qid];
+        persist();
+      } else if (r.status === 401) {
+        goLogin('Sesi login berakhir. Silakan masuk lagi untuk mengirim jawaban tersimpan.');
+        rejected = true;
+        return;
+      } else if (r.status === 429 || r.status >= 500 || r.status === 0) {
+        retry = true;
+        setStatus('warn', 'Server sibuk. Jawaban tetap antre dan akan dicoba lagi.');
+        break;
+      } else {
+        rejected = true;
+        setStatus('err', (r.data && r.data.error) || 'Jawaban belum tersimpan. Hubungi pengawas.');
+        break;
+      }
     }
-    if (!Object.keys(S.queue).length) setStatus('ok', 'Tersimpan ✓');
+    if (!Object.keys(S.queue).length) {
+      setStatus('ok', 'Tersimpan ✓');
+    } else if (!rejected) {
+      retry = true; // A choice changed while its previous version was in flight.
+    }
   } catch (e) {
     retry = true;
-    setStatus('warn', 'Menyambungkan ulang...');
+    setStatus('warn', 'Koneksi terputus. Jawaban tetap antre.');
   } finally {
     S.flushing = false;
     if (retry) setTimeout(flush, 2000);
+    if (!Object.keys(S.queue).length && S.finishOnSave) {
+      S.finishOnSave = false;
+      setTimeout(() => finishExam(true), 0);
+    }
   }
 }
 
@@ -150,7 +175,10 @@ function tick() {
   const m = String(Math.floor(S.sisa / 60)).padStart(2, '0'), s = String(S.sisa % 60).padStart(2, '0');
   $('#timer').textContent = `${m}:${s}`;
   $('#timer').classList.toggle('low', S.sisa <= 60);
-  if (S.sisa === 0) finishExam(true);
+  if (S.sisa === 0 && !S.autoFinishAttempted) {
+    S.autoFinishAttempted = true;
+    finishExam(true);
+  }
 }
 
 // Sinkronisasi berkala: waktu mengikuti server, sekaligus mendeteksi server hidup kembali.
@@ -171,17 +199,31 @@ async function sync() {
 }
 
 async function finishExam(auto) {
-  if (!auto && Object.keys(S.queue).length) { setStatus('warn', 'Masih menyimpan jawaban, coba lagi sebentar'); flush(); return; }
+  if (S.finishing) return;
+  if (Object.keys(S.queue).length || S.flushing) {
+    S.finishOnSave = auto; // Auto-finish only after every ACK has arrived.
+    setStatus('warn', 'Menunggu semua jawaban tersimpan sebelum menyelesaikan ujian.');
+    if (!S.flushing) flush();
+    return;
+  }
   if (!auto && !confirm('Yakin ingin menyelesaikan ujian?')) return;
+  S.finishing = true;
   try {
     const r = await api(`/api/sessions/${S.sid}/finish`, { method: 'POST' });
-    if (r.ok) showResult(r.data);
-  } catch (e) { setStatus('warn', 'Menyambungkan ulang...'); }
+    if (r.ok && r.data?.status === 'finished') showResult(r.data);
+    else if (r.status === 401) goLogin('Sesi login berakhir. Silakan masuk lagi.');
+    else setStatus('err', (r.data && r.data.error) || 'Gagal menyelesaikan ujian, silakan coba lagi.');
+  } catch (e) {
+    setStatus('warn', 'Koneksi gagal. Coba selesaikan ujian lagi.');
+  } finally { S.finishing = false; }
 }
 
 function showResult(d) {
   clearInterval(S.timer); clearInterval(S.beat);
-  $('#resultText').textContent = d ? `Jawaban benar: ${d.benar} dari ${d.total} soal.` : 'Ujian ini sudah selesai.';
+  const unsaved = Object.keys(S.queue).length;
+  $('#resultText').textContent = unsaved
+    ? `Ujian telah ditutup, tetapi ${unsaved} jawaban belum mendapat konfirmasi simpan. Hubungi pengawas.`
+    : (d ? `Jawaban benar: ${d.benar} dari ${d.total} soal.` : 'Ujian ini sudah selesai.');
   show('result');
 }
 
@@ -195,14 +237,19 @@ async function enterExam(user) {
   try {
     $('#who').textContent = `${user.nama} (${user.nim})`;
     const ex = await api('/api/exams');
+    if (!ex.ok || !Array.isArray(ex.data) || !ex.data.length) throw new Error('exam list unavailable');
     S.exam = ex.data[0];
     const st = await api('/api/sessions/start', { method: 'POST', body: { exam_id: S.exam.id } });
+    if (!st.ok || !st.data?.session_id) throw new Error('cannot start exam');
     S.sid = st.data.session_id;
     const [ss, qs] = await Promise.all([api('/api/sessions/' + S.sid), api(`/api/exams/${S.exam.id}/questions`)]);
+    if (!ss.ok || !ss.data?.session || !qs.ok || !Array.isArray(qs.data) || !qs.data.length) {
+      throw new Error('exam details unavailable');
+    }
+    S.queue = JSON.parse(localStorage.getItem(qKey()) || '{}');
     if (ss.data.session.status === 'finished') return showResult();
     S.q = qs.data;
     S.ans = ss.data.answers;                       // jawaban tersimpan di database (resume)
-    S.queue = JSON.parse(localStorage.getItem(qKey()) || '{}'); // jawaban yang belum sempat terkirim
     Object.assign(S.ans, S.queue);
     S.sisa = ss.data.session.sisa_detik;
     $('#judul').textContent = S.exam.judul;
@@ -210,6 +257,8 @@ async function enterExam(user) {
     show('exam');
     render();
     clearInterval(S.timer); clearInterval(S.beat);
+    S.autoFinishAttempted = false;
+    S.finishOnSave = false;
     S.timer = setInterval(tick, 1000);
     S.beat = setInterval(sync, 5000);
     if (Object.keys(S.queue).length) flush();
@@ -222,7 +271,9 @@ async function enterExam(user) {
 async function boot() {
   try {
     const r = await api('/api/me');
-    if (r.ok) enterExam(r.data); else goLogin();
+    if (r.ok) enterExam(r.data);
+    else if (r.status === 401) goLogin();
+    else throw new Error('API sementara tidak tersedia');
   } catch (e) {
     $('#banner').classList.remove('hide');
     setTimeout(boot, 2000);

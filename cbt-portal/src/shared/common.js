@@ -46,8 +46,17 @@ function createApp(name, { cleanSessions = false } = {}) {
   app.disable('x-powered-by');
 
   // Health check ringan dipasang SEBELUM session agar tidak membebani pool koneksi
-  app.get('/health', (req, res) => {
-    res.json({ status: 'ok', service: name, database: 'up' });
+  app.get('/health', async (req, res) => {
+    // A process can be running while MySQL is unavailable. Use a real
+    // readiness probe so unhealthy replicas do not receive exam traffic.
+    res.set('Cache-Control', 'no-store');
+    try {
+      await pool.query('SELECT 1');
+      res.json({ status: 'ok', service: name, database: 'up' });
+    } catch (err) {
+      console.error(`[${name}] readiness query failed:`, err.message);
+      res.status(503).json({ status: 'unavailable', service: name, database: 'down' });
+    }
   });
 
   // Access log satu baris (hanya dicatat jika error atau mode dev, agar tidak memperlambat IO container)
@@ -73,42 +82,9 @@ function createApp(name, { cleanSessions = false } = {}) {
   // Bypass touch di level JS agar zero overhead DB saat read/autosave
   store.touch = (sid, data, cb) => (cb ? cb() : undefined);
 
-  // In-memory cache untuk store.get agar ribuan autosave tidak query SELECT * FROM sessions
-  const sessionMemCache = new Map();
-  const origGet = store.get.bind(store);
-  store.get = function(sid, cb) {
-    const cached = sessionMemCache.get(sid);
-    if (cached && (Date.now() - cached.at < 60000)) {
-      return cb(null, cached.data);
-    }
-    origGet(sid, (err, data) => {
-      if (!err && data) {
-        sessionMemCache.set(sid, { data, at: Date.now() });
-      }
-      cb(err, data);
-    });
-  };
-  const origSet = store.set.bind(store);
-  store.set = function(sid, sessionData, cb) {
-    // Do not serve an uncommitted login session from local memory.
-    // Only populate the cache after MySQL acknowledges the store write.
-    return origSet(sid, sessionData, (err) => {
-      if (err) {
-        sessionMemCache.delete(sid);
-      } else {
-        if (sessionMemCache.size >= 4096) {
-          sessionMemCache.delete(sessionMemCache.keys().next().value);
-        }
-        sessionMemCache.set(sid, { data: sessionData, at: Date.now() });
-      }
-      if (cb) cb(err);
-    });
-  };
-  const origDestroy = store.destroy.bind(store);
-  store.destroy = function(sid, cb) {
-    sessionMemCache.delete(sid);
-    return origDestroy(sid, cb);
-  };
+  // Do not cache login sessions in the process: with multiple replicas a
+  // logout/destroy from one replica must immediately invalidate all others.
+  // The shared MySQL session store is authoritative for every request.
 
   app.use(session({
     name: 'cbt.sid',

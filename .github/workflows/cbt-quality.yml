@@ -29,11 +29,14 @@ jobs:
           node --check src/services/session/server.js
           node --check src/services/exam/server.js
           node --check loadtest/node-burst-1000.js
+          node --check scripts/reset-loadtest.js
+          node --check tests/test_frontend_queue.js
       - name: Verify 1000 coalesced logins + 1000 VU contract
         working-directory: cbt-portal
         run: |
           node tests/test_login_verifier.js
           node tests/test_k6_contract.js
+          node tests/test_frontend_queue.js
 
   docker-smoke:
     name: "Docker MySQL + real login, autosave, readback"
@@ -94,6 +97,45 @@ jobs:
           curl -fsS -b "$RUNNER_TEMP/cbt.cookies" "$base/api/sessions/$sid" > "$RUNNER_TEMP/readback.json"
           node -e "const d=require(process.argv[1]); if(d.answers?.['1']!=='B') process.exit(1)" "$RUNNER_TEMP/readback.json"
           echo "PASS: login cookie persisted; start, autosave PUT and MySQL-backed readback passed."
+      - name: Verify scoped reset does not delete normal student answers
+        shell: bash
+        run: |
+          set -euo pipefail
+          base=http://127.0.0.1:3000
+          curl -fsS -c "$RUNNER_TEMP/lt.cookies" -H 'content-type: application/json' \
+            -d '{"nim":"LT0001","password":"password123"}' "$base/api/login" > "$RUNNER_TEMP/ltlogin.json"
+          curl -fsS -b "$RUNNER_TEMP/lt.cookies" -H 'content-type: application/json' \
+            -d '{"exam_id":1}' "$base/api/sessions/start" > "$RUNNER_TEMP/ltstart.json"
+          sid="$(node -p 'require(process.argv[1]).session_id' "$RUNNER_TEMP/ltstart.json")"
+          curl -fsS -b "$RUNNER_TEMP/lt.cookies" -X PUT -H 'content-type: application/json' \
+            -d '{"question_id":1,"pilihan":"D"}' "$base/api/sessions/$sid/answers" > /dev/null
+          (cd cbt-portal && node scripts/reset-loadtest.js)
+          curl -fsS -b "$RUNNER_TEMP/cbt.cookies" \
+            "$base/api/sessions/$(node -p 'require(process.argv[1]).session_id' "$RUNNER_TEMP/start.json")" \
+            > "$RUNNER_TEMP/normal-after-reset.json"
+          node -e "const d=require(process.argv[1]); if(d.answers?.['1']!=='B') process.exit(1)" \
+            "$RUNNER_TEMP/normal-after-reset.json"
+          code="$(curl -sS -o /dev/null -w '%{http_code}' -b "$RUNNER_TEMP/lt.cookies" \
+            "$base/api/sessions/$sid")"
+          [[ "$code" == "404" ]]
+          echo "PASS scoped reset: LT data removed, normal student answer preserved."
+
+      - name: Verify health is 503 while database is offline
+        working-directory: cbt-portal
+        shell: bash
+        run: |
+          set -euo pipefail
+          docker compose stop mysql
+          docker compose exec -T session-service node -e '
+            fetch("http://127.0.0.1:3000/health", {signal: AbortSignal.timeout(25000)})
+              .then(async (r) => {
+                if (r.status !== 503) {
+                  console.error("Expected 503, got", r.status, await r.text());
+                  process.exitCode = 1;
+                } else console.log("PASS unhealthy MySQL => HTTP 503 readiness");
+              }).catch((e) => { console.error(e); process.exitCode = 1; });
+          '
+
       - name: Service diagnostics on failure
         if: failure()
         working-directory: cbt-portal

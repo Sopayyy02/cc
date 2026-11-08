@@ -6,6 +6,15 @@ cd "$(dirname "$0")/.."
 FILE="${1:?Pemakaian: $0 backups/<berkas>.sql.gz}"
 [ -f "$FILE" ] || { echo "Berkas tidak ditemukan: $FILE" >&2; exit 1; }
 
+# Validate the complete archive and mysqldump footer BEFORE any destructive SQL.
+# Prevent an obviously truncated archive from dropping the existing database.
+gzip -t "$FILE" || { echo "Backup gzip rusak: $FILE" >&2; exit 1; }
+FOOTER="$(gzip -cd "$FILE" | tail -n 8)"
+[[ "$FOOTER" == *"Dump completed"* ]] || {
+  echo "Backup tidak memiliki penanda selesai mysqldump; database tidak diubah." >&2
+  exit 1
+}
+
 read -r -p "Database akan ditimpa dari $FILE. Lanjut? (ketik 'ya') " ans
 [ "$ans" = "ya" ] || { echo "Dibatalkan."; exit 1; }
 

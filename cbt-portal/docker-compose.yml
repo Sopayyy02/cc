@@ -99,7 +99,7 @@ services:
     image: cbt-gateway:2.0
     restart: always
     ports:
-      - "${APP_PORT:-3000}:80"          # satu-satunya port yang terbuka ke host
+      - "${APP_BIND_IP:-127.0.0.1}:${APP_PORT:-3000}:80"          # satu-satunya port yang terbuka ke host
     networks:
       - cbt-net
     depends_on:

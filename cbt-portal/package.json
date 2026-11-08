@@ -5,7 +5,7 @@
   "main": "src/services/auth/server.js",
   "scripts": {
     "setup": "node db/setup.js",
-    "reset:loadtest": "docker compose exec -T mysql mysql -uroot -prootpass123 cbt_portal -e \"DELETE FROM answers; DELETE FROM exam_sessions; DELETE FROM sessions;\"",
+    "reset:loadtest": "node scripts/reset-loadtest.js",
     "start:auth": "PORT=3001 node src/services/auth/server.js",
     "start:exam": "PORT=3002 node src/services/exam/server.js",
     "start:session": "PORT=3003 node src/services/session/server.js"

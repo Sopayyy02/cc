@@ -29,7 +29,7 @@ Ubah dengan `-e THINK_MIN=.. -e THINK_MAX=..`.
    `docker stats` dan `docker compose logs -f gateway session-service`
 6. Buat grafik dan tabel: `python3 loadtest/plot_results.py loadtest/results/raw.json.gz`
    (butuh `pip install matplotlib`). Hasil: `loadtest/results/stress_graph.png`, `stage_summary.csv`.
-7. Ulangi uji: `./scripts/reset-loadtest.sh` (timer ujian 30 menit akan kedaluwarsa bila sesi lama dipakai).
+7. Ulangi uji dengan `npm run reset:loadtest` atau `./scripts/reset-loadtest.sh`. Reset hanya menghapus jawaban/sesi ujian dummy dengan NIM `LT[0-9]{4,}` dan tidak menghapus sesi login atau jawaban peserta lain.
 8. Setelah selesai, kembali ke konfigurasi normal: `docker compose up -d` (tanpa file override).
 
 Parameter: `-e HOLD_SEC=60..180`, `-e RAMP_SEC=30`, `-e BASE_URL=http://<host>:3000`, `-e USER_MODE=dummy` (5 siswa bawaan).
@@ -63,3 +63,7 @@ dan `SHOW PROCESSLIST` / `SHOW STATUS LIKE 'Threads_connected'` di MySQL saat le
 Titik gagal: ...
 Komponen yang pertama jenuh (bukti `docker stats`): ...
 Rekomendasi perbaikan (replika, pool, indeks, tuning MySQL): ...
+
+## Uji bukti data dan keamanan
+
+Selain k6 bertahap, jalankan `node loadtest/node-burst-1000.js` untuk 1.000 PUT dan readback di MySQL menggunakan koneksi Node terpisah. GitHub Actions manual [CBT 1000-Answer Real MySQL Benchmark](https://github.com/Sopayyy02/cc/actions/workflows/cbt-1000-benchmark.yml) menghasilkan artifact JSON/statistik Docker. Quick Tunnel bukan tempat yang valid untuk stress test 1.000 karena cap 200 request in-flight. [Audit lengkap](AUDIT_FULL_2026-11-08.md).

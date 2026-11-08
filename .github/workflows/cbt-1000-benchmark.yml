@@ -1,0 +1,125 @@
+name: "CBT | 1000-Answer Real MySQL Benchmark"
+
+run-name: "CBT MySQL burst: ${{ inputs.users }} writes by ${{ github.actor }}"
+
+on:
+  workflow_dispatch:
+    inputs:
+      users:
+        description: "Number of unique synthetic students, 1-1000"
+        type: number
+        default: 1000
+        required: true
+
+permissions:
+  contents: read
+
+concurrency:
+  group: cbt-mysql-benchmark
+  cancel-in-progress: false
+
+jobs:
+  real-benchmark:
+    name: "Dedicated runner: 1000 real HTTP PUTs and DB readback"
+    runs-on: ubuntu-24.04
+    timeout-minutes: 30
+    env:
+      BENCHMARK_USERS: ${{ inputs.users }}
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Prepare isolated dummy-only database credentials
+        working-directory: cbt-portal
+        shell: bash
+        run: |
+          set -euo pipefail
+          if ! [[ "$BENCHMARK_USERS" =~ ^[0-9]+$ ]] || (( BENCHMARK_USERS < 1 || BENCHMARK_USERS > 1000 )); then
+            echo "::error::users must be within 1-1000."
+            exit 1
+          fi
+          umask 077
+          db_pass="$(openssl rand -hex 24)"
+          cat > .env <<EOF
+          NODE_ENV=production
+          PORT=3000
+          APP_PORT=3000
+          APP_BIND_IP=127.0.0.1
+          SESSION_SECRET=$(openssl rand -hex 32)
+          INTERNAL_TOKEN=$(openssl rand -hex 32)
+          DB_HOST=mysql
+          DB_PORT=3306
+          DB_NAME=cbt_portal
+          DB_USER=cbt_user
+          DB_PASSWORD=$db_pass
+          MYSQL_ROOT_PASSWORD=$(openssl rand -hex 24)
+          MYSQL_DATABASE=cbt_portal
+          MYSQL_USER=cbt_user
+          MYSQL_PASSWORD=$db_pass
+          LOADTEST_STUDENTS=$BENCHMARK_USERS
+          EOF
+
+      - name: Boot MySQL plus scaled microservices (no public tunnel)
+        working-directory: cbt-portal
+        shell: bash
+        run: |
+          set -euo pipefail
+          docker compose -f docker-compose.yml -f docker-compose.stress.yml up -d --build \
+            --scale auth-service=2 --scale session-service=3 --scale exam-service=1
+          for i in $(seq 1 90); do
+            code="$(curl -s -o /dev/null -w '%{http_code}' --max-time 3 http://127.0.0.1:3000/healthz || true)"
+            if [[ "$code" == "200" ]]; then break; fi
+            sleep 2
+          done
+          docker compose -f docker-compose.yml -f docker-compose.stress.yml ps
+          docker compose -f docker-compose.yml -f docker-compose.stress.yml run --rm db-init
+          node -e "fetch('http://127.0.0.1:3000/healthz').then(r=>{if(!r.ok)process.exit(1)}).catch(()=>process.exit(1))"
+
+      - name: Measure 1000 concurrent PUTs and persisted answers
+        working-directory: cbt-portal
+        shell: bash
+        env:
+          BASE_URL: http://127.0.0.1:3000
+          WARMUP_CONCURRENCY: 24
+        run: |
+          set -euo pipefail
+          mkdir -p loadtest/results
+          echo "Runner CPU/memory limits:"
+          nproc
+          free -h
+          docker stats --no-stream || true
+          USERS="$BENCHMARK_USERS" node loadtest/node-burst-1000.js 2>&1 | tee loadtest/results/benchmark.log
+
+      - name: Collect diagnostics
+        if: always()
+        working-directory: cbt-portal
+        shell: bash
+        run: |
+          mkdir -p loadtest/results
+          docker compose -f docker-compose.yml -f docker-compose.stress.yml ps \
+            > loadtest/results/docker-ps.txt 2>&1 || true
+          docker stats --no-stream > loadtest/results/docker-stats.txt 2>&1 || true
+          docker compose -f docker-compose.yml -f docker-compose.stress.yml logs --tail=180 --no-color \
+            > loadtest/results/docker-logs.txt 2>&1 || true
+          {
+            echo "## Real CBT MySQL Benchmark"
+            echo ""
+            echo "- User count: $BENCHMARK_USERS"
+            echo "- Benchmark target: local Docker stack on GitHub-hosted runner, not Cloudflare Tunnel"
+            echo "- Status: see job result and uploaded node-burst-summary.json"
+            echo "- Measure: 1000 real HTTP PUTs, 1000 GET readbacks, p95/p99 and response-code breakdown"
+          } >> "$GITHUB_STEP_SUMMARY"
+
+      - name: Upload benchmark evidence
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: cbt-1000-benchmark-report
+          path: cbt-portal/loadtest/results/
+          if-no-files-found: warn
+          retention-days: 14
+
+      - name: Tear down isolated test stack
+        if: always()
+        working-directory: cbt-portal
+        run: docker compose -f docker-compose.yml -f docker-compose.stress.yml down --remove-orphans || true

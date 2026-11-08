@@ -64,7 +64,7 @@ function executeVu(vu, reject = false) {
     },
   };
   const sandbox = {
-    __ENV: { USERS: '1000', BURST_AT: '2099-02-01T00:00:00Z' },
+    __ENV: { USERS: '1000', BURST_AT: '2099-02-01T00:00:00Z', BOOTSTRAP_SPREAD_SEC: '0' },
     http,
     sleep: (seconds) => { now += Math.ceil(seconds * 1000); },
     Rate: class {

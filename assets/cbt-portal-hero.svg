@@ -1,0 +1,38 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 1200 360" role="img" aria-label="CBT Portal online examination platform">
+  <defs>
+    <linearGradient id="bg" x1="0" y1="0" x2="1" y2="1"><stop stop-color="#10152b"/><stop offset=".58" stop-color="#171b37"/><stop offset="1" stop-color="#0b1327"/></linearGradient>
+    <linearGradient id="accent" x1="0" y1="0" x2="1" y2="0"><stop stop-color="#8b76ff"/><stop offset=".57" stop-color="#6cc8ff"/><stop offset="1" stop-color="#5de0c2"/></linearGradient>
+    <linearGradient id="panel" x1="0" y1="0" x2="1" y2="1"><stop stop-color="#253055"/><stop offset="1" stop-color="#17233d"/></linearGradient>
+    <filter id="glow"><feGaussianBlur stdDeviation="30"/></filter>
+    <pattern id="dot" width="23" height="23" patternUnits="userSpaceOnUse"><circle cx="1" cy="1" r="1" fill="#a1b5de" opacity=".13"/></pattern>
+  </defs>
+  <rect width="1200" height="360" rx="23" fill="url(#bg)"/>
+  <rect width="1200" height="360" rx="23" fill="url(#dot)"/>
+  <ellipse cx="850" cy="240" rx="260" ry="150" fill="#5c61ef" opacity=".23" filter="url(#glow)"/>
+  <circle cx="1090" cy="35" r="136" fill="#3879d8" opacity=".10"/>
+  <rect x="49" y="43" width="139" height="29" rx="14.5" fill="#262d49" stroke="#454e79"/>
+  <circle cx="66" cy="58" r="4.5" fill="#68e3bc"/>
+  <text x="78" y="62.2" fill="#c8d5f4" font-family="Arial,Helvetica,sans-serif" font-size="11" font-weight="bold" letter-spacing="2">MICROSERVICES</text>
+  <text x="47" y="145" fill="#fbfdff" font-family="Arial,Helvetica,sans-serif" font-size="71" font-weight="900" letter-spacing="1">CBT PORTAL</text>
+  <rect x="50" y="161" width="334" height="6" rx="3" fill="url(#accent)"/>
+  <text x="49" y="205" fill="#bdcaed" font-family="Arial,Helvetica,sans-serif" font-size="18" letter-spacing=".4">Online Examination • Secure Autosave</text>
+  <text x="49" y="239" fill="#8395c0" font-family="Arial,Helvetica,sans-serif" font-size="15">Node.js  /  MySQL  /  Docker  /  Grafana k6</text>
+  <rect x="49" y="272" width="238" height="49" rx="14" fill="#8d75ff"/>
+  <text x="80" y="302" fill="#fff" font-family="Arial,Helvetica,sans-serif" font-size="15" font-weight="bold">1,000 ANSWER BURST</text>
+  <rect x="716" y="49" width="418" height="257" rx="22" fill="#101a32" stroke="#3b4a78" stroke-width="2"/>
+  <rect x="730" y="62" width="390" height="228" rx="13" fill="url(#panel)"/>
+  <rect x="750" y="82" width="350" height="43" rx="10" fill="#354568" opacity=".8"/>
+  <circle cx="771" cy="103" r="7" fill="#69dfb7"/>
+  <text x="787" y="107" fill="#eff3ff" font-size="15" font-weight="bold" font-family="Arial,Helvetica,sans-serif">Exam Live Monitor</text>
+  <rect x="750" y="141" width="168" height="99" rx="12" fill="#131f3b" stroke="#415477"/>
+  <text x="768" y="165" fill="#8ea4d1" font-family="Arial,Helvetica,sans-serif" font-size="12">AUTOSAVE</text>
+  <text x="768" y="209" fill="#67e1bd" font-family="Arial,Helvetica,sans-serif" font-size="37" font-weight="bold">READY</text>
+  <rect x="931" y="141" width="169" height="99" rx="12" fill="#131f3b" stroke="#415477"/>
+  <text x="948" y="165" fill="#8ea4d1" font-family="Arial,Helvetica,sans-serif" font-size="12">TEST USERS</text>
+  <text x="948" y="209" fill="#eef1ff" font-family="Arial,Helvetica,sans-serif" font-size="39" font-weight="bold">1000</text>
+  <rect x="750" y="252" width="350" height="7" rx="3.5" fill="#384465"/>
+  <rect x="750" y="252" width="262" height="7" rx="3.5" fill="url(#accent)"/>
+  <text x="1098" y="274" text-anchor="end" fill="#9baede" font-family="Arial,Helvetica,sans-serif" font-size="10">GRAFANA · K6</text>
+  <circle cx="688" cy="177" r="29" fill="#161f40" stroke="#8a78f7" stroke-width="1.5"/>
+  <path d="M675 177 l8 8 17-18" fill="none" stroke="#67e7cb" stroke-width="4" stroke-linecap="round" stroke-linejoin="round"/>
+</svg>

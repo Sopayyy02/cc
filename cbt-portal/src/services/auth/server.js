@@ -1,32 +1,33 @@
 // Auth Service: login, logout, profil. Sesi disimpan di MySQL (dipakai bersama service lain).
 const bcrypt = require('bcryptjs');
+const { createLoginVerifier } = require('../../shared/login-verifier');
 const { createApp, wrap, auth, start } = require('../../shared/common');
 
 const { app, pool } = createApp('auth', { cleanSessions: false });
 
-// Cache verifikasi password (hash + password -> bool) untuk mengatasi CPU bottleneck saat 1000 VU serempak login
-const authCache = new Map();
-async function verifyPassword(password, hash) {
-  const key = `${password}:${hash}`;
-  if (authCache.has(key)) return authCache.get(key);
-  const match = await bcrypt.compare(String(password || ''), hash);
-  if (match) authCache.set(key, true);
-  return match;
-}
+// Coalesce concurrent bcrypt comparisons for identical salted hashes.
+ // No raw passwords are stored in cache keys.
+const { verify: verifyPassword } = createLoginVerifier(bcrypt.compare);
 
-// In-memory cache data siswa untuk menghilangkan query DB berulang saat ribuan login
+// Bounded, short-lived user record cache; password changes propagate quickly.
 const studentCache = new Map();
+const STUDENT_CACHE_TTL = 30000;
+const MAX_STUDENT_CACHE = 4096;
 
 app.post('/api/login', wrap(async (req, res) => {
   const { nim, password } = req.body || {};
   if (!nim || !password) return res.status(400).json({ error: 'nim dan password wajib diisi' });
 
-  let user = studentCache.get(nim);
+  const nimKey = String(nim);
+  const cached = studentCache.get(nimKey);
+  let user = cached && cached.expiresAt > Date.now() ? cached.user : null;
   if (!user) {
-    const [r] = await pool.query('SELECT id, nim, nama, password_hash FROM students WHERE nim = ?', [nim]);
+    studentCache.delete(nimKey);
+    const [r] = await pool.query('SELECT id, nim, nama, password_hash FROM students WHERE nim = ?', [nimKey]);
     if (!r[0]) return res.status(401).json({ error: 'NIM atau password salah' });
     user = r[0];
-    studentCache.set(nim, user);
+    if (studentCache.size >= MAX_STUDENT_CACHE) studentCache.delete(studentCache.keys().next().value);
+    studentCache.set(nimKey, { user, expiresAt: Date.now() + STUDENT_CACHE_TTL });
   }
 
   if (!(await verifyPassword(password, user.password_hash))) {

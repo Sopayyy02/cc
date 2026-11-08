@@ -1,0 +1,104 @@
+name: "CBT | Backend & Load Test Contract QA"
+
+on:
+  push:
+    branches: [main]
+    paths: ["cbt-portal/**", ".github/workflows/cbt-quality.yml"]
+  pull_request:
+    paths: ["cbt-portal/**", ".github/workflows/cbt-quality.yml"]
+
+permissions:
+  contents: read
+
+jobs:
+  contract-tests:
+    name: "Syntax + 1000 VU contract + bcrypt coalescing"
+    runs-on: ubuntu-24.04
+    timeout-minutes: 10
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: "20"
+      - name: Validate Node service syntax
+        working-directory: cbt-portal
+        run: |
+          node --check src/shared/login-verifier.js
+          node --check src/shared/common.js
+          node --check src/services/auth/server.js
+          node --check src/services/session/server.js
+          node --check src/services/exam/server.js
+          node --check loadtest/node-burst-1000.js
+      - name: Verify 1000 coalesced logins + 1000 VU contract
+        working-directory: cbt-portal
+        run: |
+          node tests/test_login_verifier.js
+          node tests/test_k6_contract.js
+
+  docker-smoke:
+    name: "Docker MySQL + real login, autosave, readback"
+    runs-on: ubuntu-24.04
+    timeout-minutes: 18
+    steps:
+      - uses: actions/checkout@v4
+      - name: Generate ephemeral MySQL and session secrets
+        working-directory: cbt-portal
+        shell: bash
+        run: |
+          set -euo pipefail
+          umask 077
+          cat > .env <<EOF
+          NODE_ENV=production
+          APP_PORT=3000
+          PORT=3000
+          SESSION_SECRET=$(openssl rand -hex 32)
+          INTERNAL_TOKEN=$(openssl rand -hex 32)
+          DB_HOST=mysql
+          DB_PORT=3306
+          DB_NAME=cbt_portal
+          DB_USER=cbt_user
+          DB_PASSWORD=$(openssl rand -hex 24)
+          MYSQL_DATABASE=cbt_portal
+          MYSQL_USER=cbt_user
+          MYSQL_ROOT_PASSWORD=$(openssl rand -hex 24)
+          LOADTEST_STUDENTS=5
+          EOF
+          db_password="$(grep '^DB_PASSWORD=' .env | cut -d= -f2-)"
+          echo "MYSQL_PASSWORD=$db_password" >> .env
+      - name: Build and run application
+        working-directory: cbt-portal
+        shell: bash
+        run: |
+          docker compose up -d --build
+          for i in $(seq 1 100); do
+            code="$(curl -sS -o /dev/null -w '%{http_code}' --max-time 3 http://127.0.0.1:3000/healthz || true)"
+            if [[ "$code" == "200" ]]; then break; fi
+            sleep 2
+          done
+          docker compose ps
+      - name: Real MySQL session + autosave + readback
+        shell: bash
+        run: |
+          set -euo pipefail
+          base=http://127.0.0.1:3000
+          curl -fsS -c "$RUNNER_TEMP/cbt.cookies" -H 'content-type: application/json' \
+            -d '{"nim":"2024001","password":"password123"}' "$base/api/login" > "$RUNNER_TEMP/login.json"
+          node -e "const d=require(process.argv[1]); if(d.nim!=='2024001') process.exit(1)" "$RUNNER_TEMP/login.json"
+          curl -fsS -b "$RUNNER_TEMP/cbt.cookies" -H 'content-type: application/json' \
+            -d '{"exam_id":1}' "$base/api/sessions/start" > "$RUNNER_TEMP/start.json"
+          sid="$(node -p 'require(process.argv[1]).session_id' "$RUNNER_TEMP/start.json")"
+          [[ "$sid" =~ ^[0-9]+$ ]]
+          curl -fsS -b "$RUNNER_TEMP/cbt.cookies" -X PUT -H 'content-type: application/json' \
+            -d '{"question_id":1,"pilihan":"B"}' "$base/api/sessions/$sid/answers" > "$RUNNER_TEMP/answer.json"
+          node -e "const d=require(process.argv[1]); if(d.status!=='saved') process.exit(1)" "$RUNNER_TEMP/answer.json"
+          curl -fsS -b "$RUNNER_TEMP/cbt.cookies" "$base/api/sessions/$sid" > "$RUNNER_TEMP/readback.json"
+          node -e "const d=require(process.argv[1]); if(d.answers?.['1']!=='B') process.exit(1)" "$RUNNER_TEMP/readback.json"
+          echo "PASS: login cookie persisted; start, autosave PUT and MySQL-backed readback passed."
+      - name: Service diagnostics on failure
+        if: failure()
+        working-directory: cbt-portal
+        run: docker compose logs --tail=150 --no-color || true
+      - name: Cleanup
+        if: always()
+        working-directory: cbt-portal
+        run: docker compose down --remove-orphans || true

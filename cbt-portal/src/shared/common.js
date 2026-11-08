@@ -90,8 +90,19 @@ function createApp(name, { cleanSessions = false } = {}) {
   };
   const origSet = store.set.bind(store);
   store.set = function(sid, sessionData, cb) {
-    sessionMemCache.set(sid, { data: sessionData, at: Date.now() });
-    return origSet(sid, sessionData, cb);
+    // Do not serve an uncommitted login session from local memory.
+    // Only populate the cache after MySQL acknowledges the store write.
+    return origSet(sid, sessionData, (err) => {
+      if (err) {
+        sessionMemCache.delete(sid);
+      } else {
+        if (sessionMemCache.size >= 4096) {
+          sessionMemCache.delete(sessionMemCache.keys().next().value);
+        }
+        sessionMemCache.set(sid, { data: sessionData, at: Date.now() });
+      }
+      if (cb) cb(err);
+    });
   };
   const origDestroy = store.destroy.bind(store);
   store.destroy = function(sid, cb) {

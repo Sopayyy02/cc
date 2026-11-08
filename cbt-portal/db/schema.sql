@@ -42,3 +42,14 @@ CREATE TABLE IF NOT EXISTS answers (
   FOREIGN KEY (session_id) REFERENCES exam_sessions(id),
   FOREIGN KEY (question_id) REFERENCES questions(id)
 ) ENGINE=InnoDB;
+
+-- Shared by auth/exam/session services through express-mysql-session.
+-- createDatabaseTable=false in src/shared/common.js requires this table to
+-- exist before any authentication request; index supports expiry cleanup.
+CREATE TABLE IF NOT EXISTS sessions (
+  session_id VARCHAR(128) COLLATE utf8mb4_bin NOT NULL,
+  expires INT UNSIGNED NOT NULL,
+  data MEDIUMTEXT COLLATE utf8mb4_bin,
+  PRIMARY KEY (session_id),
+  KEY idx_sessions_expires (expires)
+) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_bin;

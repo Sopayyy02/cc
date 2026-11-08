@@ -43,18 +43,37 @@ async function ownSession(id, studentId) {
 // Cache daftar id soal per ujian (60 dtk). Bila Exam Service sedang down,
 // cache lama tetap dipakai supaya autosave jawaban peserta tidak terhenti.
 const qCache = new Map();
+const qInFlight = new Map();
+
 async function questionIds(examId) {
   const c = qCache.get(examId);
   if (c && Date.now() - c.at < 60000) return c.ids;
-  try {
-    const r = await callService(EXAM_URL, `/internal/exams/${examId}/question-ids`);
-    const ids = new Set(r.status === 200 ? r.data.ids : []);
-    qCache.set(examId, { ids, at: Date.now() });
-    return ids;
-  } catch (e) {
-    if (c) return c.ids;
-    throw e;
-  }
+
+  // Single-flight per exam per replica: 1,000 simultaneous autosaves should
+  // NOT cause 1,000 HTTP requests to the Exam Service on a cold cache.
+  const pending = qInFlight.get(examId);
+  if (pending) return pending;
+
+  const refresh = (async () => {
+    try {
+      const response = await callService(EXAM_URL, `/internal/exams/${examId}/question-ids`);
+      if (response.status !== 200 || !Array.isArray(response.data?.ids)) {
+        const err = new Error('question metadata not available from exam-service');
+        err.code = 'UPSTREAM_UNAVAILABLE';
+        throw err;
+      }
+      const ids = new Set(response.data.ids);
+      qCache.set(examId, { ids, at: Date.now() });
+      return ids;
+    } catch (err) {
+      // Existing valid cached metadata permits an autosave during a brief
+      // Exam Service outage. Never cache an empty list for a transient 5xx.
+      if (c) return c.ids;
+      throw err;
+    }
+  })().finally(() => qInFlight.delete(examId));
+  qInFlight.set(examId, refresh);
+  return refresh;
 }
 
 // Autosave ACKs and exam-start decisions must never depend on replica-local caches.

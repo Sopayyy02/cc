@@ -1,0 +1,206 @@
+name: "CBT Portal | Cloudflare Web Preview"
+
+run-name: "CBT preview by ${{ github.actor }} (${{ inputs.live_minutes }} min)"
+
+on:
+  workflow_dispatch:
+    inputs:
+      access_email:
+        description: "Email allowed to open the temporary website (Cloudflare one-time PIN)"
+        required: true
+        type: string
+      live_minutes:
+        description: "Minutes online after startup (1-350; 6h GitHub runner hard limit)"
+        required: true
+        default: 350
+        type: number
+
+permissions:
+  contents: read
+
+concurrency:
+  group: cbt-cloudflare-preview
+  cancel-in-progress: false
+
+jobs:
+  temporary-website:
+    name: "Temporary HTTPS website + keepalive"
+    runs-on: ubuntu-24.04
+    timeout-minutes: 360
+    env:
+      PREVIEW_ALLOWED_EMAIL: ${{ inputs.access_email }}
+      PREVIEW_LIVE_MINUTES: ${{ inputs.live_minutes }}
+    steps:
+      - name: Checkout the repository
+        uses: actions/checkout@v4
+
+      - name: Generate isolated demo-only credentials
+        shell: bash
+        run: |
+          set -euo pipefail
+          if ! [[ "$PREVIEW_ALLOWED_EMAIL" =~ ^[A-Za-z0-9._%+-]+@[A-Za-z0-9.-]+\.[A-Za-z]{2,}$ ]]; then
+            echo "::error::Provide one valid email address for Cloudflare OTP access."
+            exit 1
+          fi
+          if ! [[ "$PREVIEW_LIVE_MINUTES" =~ ^[0-9]+$ ]] || (( PREVIEW_LIVE_MINUTES < 1 || PREVIEW_LIVE_MINUTES > 350 )); then
+            echo "::error::live_minutes must be 1-350."
+            exit 1
+          fi
+          cd cbt-portal
+          session_secret="$(openssl rand -hex 32)"
+          internal_token="$(openssl rand -hex 32)"
+          db_password="$(openssl rand -hex 24)"
+          root_password="$(openssl rand -hex 24)"
+          umask 077
+          cat > .env <<EOF
+          NODE_ENV=production
+          PORT=3000
+          APP_PORT=3000
+          SESSION_SECRET=$session_secret
+          INTERNAL_TOKEN=$internal_token
+          DB_HOST=mysql
+          DB_PORT=3306
+          DB_NAME=cbt_portal
+          DB_USER=cbt_user
+          DB_PASSWORD=$db_password
+          MYSQL_ROOT_PASSWORD=$root_password
+          MYSQL_DATABASE=cbt_portal
+          MYSQL_USER=cbt_user
+          MYSQL_PASSWORD=$db_password
+          EXAM_SERVICE_URL=http://exam-service:3000
+          LOADTEST_STUDENTS=1000
+          EOF
+          chmod 600 .env
+          echo "Ephemeral .env created (never uploaded to artifacts or committed)."
+
+      - name: Build and boot app, database and services
+        working-directory: cbt-portal
+        shell: bash
+        run: |
+          set -euo pipefail
+          docker compose up --detach --build
+          ready=0
+          for attempt in $(seq 1 90); do
+            gateway="$(curl --silent --output /dev/null --write-out '%{http_code}' --max-time 3 http://127.0.0.1:3000/healthz || true)"
+            protected="$(curl --silent --output /dev/null --write-out '%{http_code}' --max-time 3 http://127.0.0.1:3000/api/exams || true)"
+            if [[ "$gateway" == "200" && "$protected" == "401" ]]; then
+              ready=1
+              break
+            fi
+            sleep 2
+          done
+          docker compose ps
+          if [[ "$ready" != "1" ]]; then
+            echo "::error::CBT gateway or backend did not become healthy."
+            docker compose logs --tail=100 --no-color
+            exit 1
+          fi
+          echo "Web UI + protected API responding on localhost:3000."
+
+      - name: Install official cloudflared
+        shell: bash
+        run: |
+          set -euo pipefail
+          curl --fail --show-error --silent --location --retry 3 \
+            "https://github.com/cloudflare/cloudflared/releases/latest/download/cloudflared-linux-amd64.deb" \
+            --output "$RUNNER_TEMP/cloudflared.deb"
+          sudo dpkg -i "$RUNNER_TEMP/cloudflared.deb"
+          cloudflared version
+
+      - name: Start Cloudflare email-protected Quick Tunnel
+        id: tunnel
+        shell: bash
+        run: |
+          set -euo pipefail
+          log="$RUNNER_TEMP/cbt-cloudflared.log"
+          cloudflared tunnel --no-autoupdate --url http://127.0.0.1:3000 \
+            --allowed-mail "$PREVIEW_ALLOWED_EMAIL" >"$log" 2>&1 </dev/null &
+          tunnel_pid=$!
+          echo "$tunnel_pid" > "$RUNNER_TEMP/cbt-cloudflared.pid"
+          url=""
+          for attempt in $(seq 1 90); do
+            if grep -Eoq 'https://[a-zA-Z0-9-]+[.]trycloudflare[.]com' "$log"; then
+              url="$(grep -Eo 'https://[a-zA-Z0-9-]+[.]trycloudflare[.]com' "$log" | head -n 1)"
+              break
+            fi
+            if ! kill -0 "$tunnel_pid" 2>/dev/null; then
+              echo "::error::cloudflared exited before publishing a URL."
+              tail -n 60 "$log"
+              exit 1
+            fi
+            sleep 2
+          done
+          if [[ -z "$url" ]]; then
+            echo "::error::No trycloudflare.com URL was found within 180 seconds."
+            tail -n 60 "$log"
+            exit 1
+          fi
+          echo "url=$url" >> "$GITHUB_OUTPUT"
+          echo "::notice title=CBT Web Preview::$url"
+          {
+            echo "## CBT Web Preview is ready"
+            echo ""
+            echo "### [Open the CBT website]($url)"
+            echo ""
+            echo "| Detail | Value |"
+            echo "| --- | --- |"
+            echo "| Mode | Temporary Cloudflare HTTPS tunnel |"
+            echo "| Browser access | Cloudflare email one-time PIN (allowed email from workflow input) |"
+            echo "| CBT dummy login | NIM \`2024001\` / password \`password123\` |"
+            echo "| Max online time | $PREVIEW_LIVE_MINUTES minutes after tunnel startup (job max 6h) |"
+            echo "| Manual stop | Actions -> current run -> Cancel workflow |"
+            echo ""
+            echo "> This is a temporary demo on a GitHub-hosted runner, not a 1,000-concurrent-write benchmark. Quick Tunnels cap at 200 in-flight requests."
+          } >> "$GITHUB_STEP_SUMMARY"
+          echo "Preview URL: $url"
+          echo "OTP restriction active. Preview remains online while the next step runs."
+
+      - name: Keep website online until timeout or manual cancellation
+        shell: bash
+        run: |
+          set -euo pipefail
+          tunnel_pid="$(cat "$RUNNER_TEMP/cbt-cloudflared.pid")"
+          stop_at="$(( $(date +%s) + PREVIEW_LIVE_MINUTES * 60 ))"
+          failures=0
+          trap 'kill "$tunnel_pid" 2>/dev/null || true' EXIT
+          echo "URL: ${{ steps.tunnel.outputs.url }}"
+          echo "Keepalive active for up to $PREVIEW_LIVE_MINUTES min. Stop: Actions -> Cancel workflow."
+          while (( $(date +%s) < stop_at )); do
+            if ! kill -0 "$tunnel_pid" 2>/dev/null; then
+              echo "::error::Cloudflare Tunnel stopped."
+              tail -n 60 "$RUNNER_TEMP/cbt-cloudflared.log"
+              exit 1
+            fi
+            # Check the application directly; the public tunnel requires interactive OTP.
+            status="$(curl --silent --output /dev/null --write-out '%{http_code}' --max-time 8 http://127.0.0.1:3000/api/exams || true)"
+            if [[ "$status" != "401" ]]; then
+              failures=$(( failures + 1 ))
+              echo "::warning::Health probe returned HTTP $status (consecutive failures: $failures)."
+              if (( failures >= 3 )); then
+                echo "::error::Local CBT API unavailable for three checks."
+                exit 1
+              fi
+            else
+              failures=0
+            fi
+            remaining="$(( (stop_at - $(date +%s)) / 60 ))"
+            echo "Preview alive · UTC $(date -u +%H:%M:%S) · ~$remaining min left · press Cancel workflow to stop."
+            sleep 30
+          done
+          echo "Preview session duration reached. Closing the tunnel."
+
+      - name: Show backend diagnostics if something failed
+        if: failure()
+        working-directory: cbt-portal
+        shell: bash
+        run: docker compose logs --tail=100 --no-color || true
+
+      - name: Cleanup temporary resources
+        if: always()
+        working-directory: cbt-portal
+        shell: bash
+        run: |
+          if [[ -f "$RUNNER_TEMP/cbt-cloudflared.pid" ]]; then
+            kill "$(cat "$RUNNER_TEMP/cbt-cloudflared.pid")" 2>/dev/null || true
+          fi
+          docker compose down --remove-orphans || true

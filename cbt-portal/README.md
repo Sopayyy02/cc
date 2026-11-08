@@ -99,3 +99,67 @@ Gunakan [panduan Grafana burst 1.000](docs/grafana-1000.md) untuk menyiapkan
 1.000 akun dummy dan mengukur 1.000 autosave PUT pada detik yang sama.
 Skrip memeriksa jawaban melalui GET setelah ACK, bukan hanya HTTP 200.
 Mode classroom dengan NAT sekolah bersifat opt-in; produksi tetap rate-limited.
+
+
+## D. Web preview HTTPS sementara dan diagnosis 1.000 jawaban
+
+README visual di root repository: [../README.md](../README.md).
+
+### Web lokal dan Cloudflare
+
+Di Windows (PowerShell), setelah menyiapkan `.env` dan Docker Desktop:
+
+```powershell
+docker compose up -d --build
+Start-Process http://localhost:3000
+```
+
+Untuk membagikan preview pribadi melalui Cloudflare dengan OTP email (wajib memasang
+`cloudflared`):
+
+```powershell
+powershell -ExecutionPolicy Bypass -File .\scripts\start-local-preview.ps1 -AllowedEmail "email-anda@example.com"
+```
+
+Selama PowerShell dan `cloudflared` berjalan, URL `https://...trycloudflare.com`
+dapat dibuka memakai email tersebut; tekan **Ctrl+C** untuk menghentikan publikasi.
+Proses lokal Docker tetap hidup. Alternatif: **GitHub Actions > CBT Portal |
+Cloudflare Web Preview > Run workflow**. Masukkan email Anda untuk PIN dan durasi
+1-350 menit. URL publik tertera di **Job Summary**; workflow berhenti saat waktu
+habis, dibatalkan manual, atau runner mencapai batas 6 jam.
+
+Quick Tunnel dibatasi 200 request in-flight; jangan arahkan uji k6 1.000 pengguna
+melalui alamat itu. Gunakan `http://localhost:3000` atau staging privat.
+
+### Diagnostic terpisah untuk error sekitar 300 pengguna
+
+Pastikan `.env` memuat `LOADTEST_STUDENTS=1000`. Untuk seed ulang akun dummy
+tanpa menghapus sesi atau jawaban lain:
+
+```powershell
+docker compose -f docker-compose.yml -f docker-compose.stress.yml run --rm db-init
+```
+
+Pertama uji 1.000 pengiriman serentak memakai **Node.js** tanpa biaya RAM 1.000
+virtual user k6:
+
+```powershell
+node .\loadtest\node-burst-1000.js
+```
+
+Lihat `loadtest/results/node-burst-summary.json`: jumlah login berhasil, ACK
+autosave, verifikasi database, distribusi 429/401/500/502/503/504 dan p95/p99.
+Tes ini meluncurkan 1.000 request HTTP yang pending bersamaan tetapi tidak
+menggantikan tes 1.000 sesi pengguna aktif di k6.
+
+Lalu uji dengan Grafana+k6 (1.000 VU):
+
+```powershell
+powershell -ExecutionPolicy Bypass -File .\scripts\run-grafana-1000.ps1
+```
+
+Login k6 dipisah waktunya sebelum burst autosave; autosave diverifikasi dengan
+GET database. Jika tes Node lulus sedangkan 1.000 k6 VU gagal, periksa RAM
+dan CPU load generator. Dokumentasi lebih detail: [grafana-1000.md](docs/grafana-1000.md).
+
+Jangan menjalankan load test ke web Quick Tunnel atau ujian produksi.

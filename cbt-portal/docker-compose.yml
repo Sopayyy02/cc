@@ -1,0 +1,117 @@
+# Portal Ujian Online CBT - Kelompok 2 (arsitektur microservices)
+# Jalankan:      docker compose up -d --build
+# Scale-out:     docker compose up -d --scale session-service=3 --scale exam-service=2
+#
+#   Browser -> gateway (Nginx: API Gateway + Load Balancer, port APP_PORT)
+#                 |-- /               frontend statis
+#                 |-- /api/login|me|logout   -> auth-service    (x N replika)
+#                 |-- /api/exams*            -> exam-service    (x N replika)
+#                 `-- /api/sessions*         -> session-service (x N replika) --HTTP internal--> exam-service
+#              semua service -> mysql (jaringan privat cbt-net)
+x-service: &service
+  restart: always
+  init: true
+  env_file: .env
+  environment: &service-env
+    DB_HOST: mysql                      # nama service = hostname di jaringan cbt-net
+    DB_PORT: "3306"
+    DB_POOL: "5"                        # kecil per replika; total koneksi = pool x replika
+    EXAM_SERVICE_URL: http://exam-service:3000
+  networks:
+    - cbt-net
+  depends_on:
+    mysql:
+      condition: service_healthy
+    db-init:
+      condition: service_completed_successfully
+  deploy:
+    resources:
+      limits:
+        cpus: "0.50"
+        memory: 256M
+
+services:
+  mysql:
+    image: mysql:8
+    container_name: cbt-mysql
+    restart: always
+    env_file: .env                      # MYSQL_ROOT_PASSWORD, MYSQL_DATABASE, MYSQL_USER, MYSQL_PASSWORD
+    command:
+      - --character-set-server=utf8mb4
+      - --collation-server=utf8mb4_unicode_ci
+      - --innodb-flush-log-at-trx-commit=1   # durabilitas penuh: commit langsung ditulis ke disk (RPO ketat)
+      - --max-connections=300                # cukup untuk beberapa replika x pool
+    volumes:
+      - mysqldata:/var/lib/mysql        # data + tabel sessions tetap ada walau container dihapus
+    networks:
+      - cbt-net
+    # Port 3306 sengaja TIDAK dipublish: hanya service backend yang dapat mengakses MySQL.
+    healthcheck:
+      # Lewat TCP (127.0.0.1) agar tidak lolos saat server sementara proses inisialisasi masih berjalan
+      test: ["CMD-SHELL", "mysqladmin ping -h 127.0.0.1 -uroot -p$$MYSQL_ROOT_PASSWORD --silent"]
+      interval: 5s
+      timeout: 5s
+      retries: 20
+      start_period: 30s
+
+  # Job satu kali: buat tabel + data dummy (aman diulang), lalu selesai.
+  db-init:
+    build:
+      context: .
+      args: { SERVICE: auth }
+    image: cbt-auth:2.0
+    command: ["node", "db/setup.js"]
+    restart: "no"
+    env_file: .env
+    environment: *service-env
+    networks:
+      - cbt-net
+    depends_on:
+      mysql:
+        condition: service_healthy
+
+  auth-service:
+    <<: *service
+    build:
+      context: .
+      args: { SERVICE: auth }
+    image: cbt-auth:2.0
+
+  exam-service:
+    <<: *service
+    build:
+      context: .
+      args: { SERVICE: exam }
+    image: cbt-exam:2.0
+
+  session-service:
+    <<: *service
+    build:
+      context: .
+      args: { SERVICE: session }
+    image: cbt-session:2.0
+
+  gateway:
+    build:
+      context: .
+      dockerfile: gateway/Dockerfile
+      args: { MODE: gateway }
+    image: cbt-gateway:2.0
+    restart: always
+    ports:
+      - "${APP_PORT:-3000}:80"          # satu-satunya port yang terbuka ke host
+    networks:
+      - cbt-net
+    depends_on:
+      - auth-service
+      - exam-service
+      - session-service
+
+volumes:
+  mysqldata:
+    name: cbt_mysqldata
+
+networks:
+  cbt-net:
+    name: cbt-net
+    driver: bridge

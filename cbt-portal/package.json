@@ -1,0 +1,21 @@
+{
+  "name": "cbt-portal",
+  "version": "2.0.0",
+  "description": "Portal Ujian Online CBT - Kelompok 2",
+  "main": "src/services/auth/server.js",
+  "scripts": {
+    "setup": "node db/setup.js",
+    "reset:loadtest": "docker compose exec -T mysql mysql -uroot -prootpass123 cbt_portal -e \"DELETE FROM answers; DELETE FROM exam_sessions; DELETE FROM sessions;\"",
+    "start:auth": "PORT=3001 node src/services/auth/server.js",
+    "start:exam": "PORT=3002 node src/services/exam/server.js",
+    "start:session": "PORT=3003 node src/services/session/server.js"
+  },
+  "dependencies": {
+    "bcryptjs": "^2.4.3",
+    "dotenv": "^16.4.5",
+    "express": "^4.19.2",
+    "express-mysql-session": "^3.0.3",
+    "express-session": "^1.18.0",
+    "mysql2": "^3.11.0"
+  }
+}

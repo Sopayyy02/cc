@@ -1,0 +1,9 @@
+# Salin ke terraform.tfvars (JANGAN di-commit). Alternatif: export TF_VAR_db_password=... dst.
+region         = "ap-southeast-1"
+db_password    = "GantiPasswordKuat123"
+session_secret = "string-acak-panjang-minimal-32-karakter"
+internal_token = "token-acak-untuk-antar-service"
+
+min_tasks  = 2
+max_tasks  = 6
+cpu_target = 60

@@ -1,0 +1,249 @@
+<!doctype html>
+<html lang="id">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width,initial-scale=1">
+<title>Portal Ujian CBT</title>
+<style>
+:root{--bg:#eef1f4;--card:#fff;--ink:#17212b;--mut:#5f6c7a;--pri:#0f5c6e;--pri-d:#0a4553;--line:#d5dce3;--ok:#18794e;--warn:#a15c00;--err:#b42318;--sel:#e2f1f4}
+*{box-sizing:border-box}
+body{margin:0;background:var(--bg);color:var(--ink);font:16px/1.5 "Segoe UI",system-ui,sans-serif}
+.wrap{max-width:860px;margin:0 auto;padding:16px}
+.card{background:var(--card);border:1px solid var(--line);border-radius:8px;padding:20px}
+h1{font-size:1.35rem;margin:0 0 4px}
+.mut{color:var(--mut);font-size:.9rem}
+input{width:100%;padding:10px 12px;margin:6px 0 14px;border:1px solid var(--line);border-radius:6px;font:inherit}
+button{font:inherit;cursor:pointer}
+.btn{background:var(--pri);color:#fff;border:0;border-radius:6px;padding:10px 18px}
+.btn:hover{background:var(--pri-d)}
+.btn.ghost{background:#fff;color:var(--pri);border:1px solid var(--pri)}
+button:focus-visible{outline:3px solid #7fb8c4;outline-offset:2px}
+.top{display:flex;justify-content:space-between;align-items:center;gap:12px;flex-wrap:wrap;margin-bottom:12px}
+#timer{font-size:1.6rem;font-weight:700;font-variant-numeric:tabular-nums}
+#timer.low{color:var(--err)}
+#status{font-size:.9rem;padding:4px 10px;border-radius:99px;background:#fff;border:1px solid var(--line)}
+#status.ok{color:var(--ok);border-color:var(--ok)}
+#status.warn{color:var(--warn);border-color:var(--warn)}
+#status.err{color:var(--err);border-color:var(--err)}
+#qtext{font-size:1.15rem;margin:6px 0 14px}
+.opt{display:block;width:100%;text-align:left;background:#fff;border:1px solid var(--line);border-radius:6px;padding:12px 14px;margin-bottom:8px}
+.opt:hover{border-color:var(--pri)}
+.opt.sel{background:var(--sel);border-color:var(--pri);box-shadow:inset 4px 0 0 var(--pri)}
+.opt b{display:inline-block;width:1.6em}
+#nav{display:flex;flex-wrap:wrap;gap:6px;margin:16px 0}
+.n{width:38px;height:38px;border:1px solid var(--line);background:#fff;border-radius:6px}
+.n.done{background:var(--pri);color:#fff;border-color:var(--pri)}
+.n.cur{outline:3px solid #7fb8c4}
+.row{display:flex;justify-content:space-between;gap:8px;flex-wrap:wrap}
+.hide{display:none}
+#err{color:var(--err);min-height:1.4em}
+#banner{background:#fff4e0;border:1px solid var(--warn);color:var(--warn);padding:8px 12px;border-radius:6px;margin-bottom:12px}
+</style>
+</head>
+<body>
+<div class="wrap">
+  <div id="banner" class="hide">Server tidak merespons. Menyambungkan ulang...</div>
+
+  <div id="login" class="card hide" style="max-width:380px;margin:8vh auto">
+    <h1>Portal Ujian CBT</h1>
+    <p class="mut">Masuk dengan NIM dan password Anda.</p>
+    <form id="loginForm">
+      <label>NIM<input id="nim" autocomplete="username" value="2024001"></label>
+      <label>Password<input id="pw" type="password" autocomplete="current-password" value="password123"></label>
+      <div id="err"></div>
+      <button class="btn" type="submit">Masuk</button>
+    </form>
+  </div>
+
+  <div id="exam" class="hide">
+    <div class="top">
+      <div><h1 id="judul"></h1><div class="mut" id="who"></div></div>
+      <div style="text-align:right"><div id="timer">--:--</div><span id="status" class="ok">Tersimpan ✓</span></div>
+    </div>
+    <div class="card">
+      <div class="mut" id="qno"></div>
+      <div id="qtext"></div>
+      <div id="opts"></div>
+      <div id="nav"></div>
+      <div class="row">
+        <div><button class="btn ghost" id="prev">Sebelumnya</button> <button class="btn ghost" id="next">Berikutnya</button></div>
+        <button class="btn" id="finish">Selesaikan ujian</button>
+      </div>
+    </div>
+  </div>
+
+  <div id="result" class="card hide" style="max-width:420px;margin:8vh auto">
+    <h1>Ujian selesai</h1>
+    <p id="resultText"></p>
+    <button class="btn ghost" id="logout">Keluar</button>
+  </div>
+</div>
+
+<script>
+const $ = (s) => document.querySelector(s);
+const S = { q: [], ans: {}, sid: null, sisa: 0, cur: 0, queue: {}, flushing: false, exam: null, timer: null, beat: null };
+const esc = (t) => String(t).replace(/[&<>"]/g, (c) => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;' }[c]));
+const show = (id) => ['login', 'exam', 'result'].forEach((x) => $('#' + x).classList.toggle('hide', x !== id));
+
+// fetch melempar error jika server mati (koneksi ditolak); status HTTP dikembalikan apa adanya.
+async function api(path, opt = {}) {
+  const r = await fetch(path, {
+    credentials: 'same-origin',
+    method: opt.method || 'GET',
+    headers: { 'Content-Type': 'application/json' },
+    body: opt.body ? JSON.stringify(opt.body) : undefined,
+  });
+  let data = null;
+  try { data = await r.json(); } catch (e) { /* abaikan */ }
+  return { ok: r.ok, status: r.status, data };
+}
+
+function setStatus(kind, text) { const s = $('#status'); s.className = kind; s.textContent = text; }
+const qKey = () => 'pending_' + S.sid;
+const persist = () => localStorage.setItem(qKey(), JSON.stringify(S.queue));
+
+// Antrean jawaban: disimpan di localStorage, dikirim ulang sampai server menerima.
+async function flush() {
+  if (S.flushing) return;
+  S.flushing = true;
+  let retry = false;
+  try {
+    for (const qid of Object.keys(S.queue)) {
+      const p = S.queue[qid];
+      const r = await api(`/api/sessions/${S.sid}/answers`, { method: 'PUT', body: { question_id: +qid, pilihan: p } });
+      if (r.ok) { if (S.queue[qid] === p) delete S.queue[qid]; persist(); }
+      else if (r.status === 401) { return goLogin('Sesi login berakhir. Silakan masuk lagi.'); }
+      else if (r.status >= 500) { throw new Error('server'); }
+      else { delete S.queue[qid]; persist(); setStatus('err', (r.data && r.data.error) || 'Jawaban ditolak'); }
+    }
+    if (!Object.keys(S.queue).length) setStatus('ok', 'Tersimpan ✓');
+  } catch (e) {
+    retry = true;
+    setStatus('warn', 'Menyambungkan ulang...');
+  } finally {
+    S.flushing = false;
+    if (retry) setTimeout(flush, 2000);
+  }
+}
+
+function choose(qid, p) {
+  S.ans[qid] = p;
+  S.queue[qid] = p;
+  persist();
+  setStatus('warn', 'Menyimpan...');
+  render();
+  flush();
+}
+
+function render() {
+  const q = S.q[S.cur];
+  $('#qno').textContent = `Soal ${S.cur + 1} dari ${S.q.length}`;
+  $('#qtext').textContent = q.teks;
+  $('#opts').innerHTML = ['A', 'B', 'C', 'D'].map((k) =>
+    `<button class="opt${S.ans[q.id] === k ? ' sel' : ''}" data-k="${k}"><b>${k}.</b>${esc(q['opsi_' + k.toLowerCase()])}</button>`).join('');
+  $('#nav').innerHTML = S.q.map((x, i) =>
+    `<button class="n${S.ans[x.id] ? ' done' : ''}${i === S.cur ? ' cur' : ''}" data-i="${i}" aria-label="Soal ${i + 1}">${i + 1}</button>`).join('');
+}
+
+function tick() {
+  S.sisa = Math.max(0, S.sisa - 1);
+  const m = String(Math.floor(S.sisa / 60)).padStart(2, '0'), s = String(S.sisa % 60).padStart(2, '0');
+  $('#timer').textContent = `${m}:${s}`;
+  $('#timer').classList.toggle('low', S.sisa <= 60);
+  if (S.sisa === 0) finishExam(true);
+}
+
+// Sinkronisasi berkala: waktu mengikuti server, sekaligus mendeteksi server hidup kembali.
+async function sync() {
+  try {
+    const r = await api('/api/sessions/' + S.sid);
+    if (r.status === 401) return goLogin('Sesi login berakhir. Silakan masuk lagi.');
+    if (!r.ok) throw new Error('server');
+    $('#banner').classList.add('hide');
+    S.sisa = r.data.session.sisa_detik;
+    if (r.data.session.status === 'finished') return showResult();
+    if (Object.keys(S.queue).length) flush();
+    else if (!S.flushing) setStatus('ok', 'Tersimpan ✓');
+  } catch (e) {
+    $('#banner').classList.remove('hide');
+    setStatus('warn', 'Menyambungkan ulang...');
+  }
+}
+
+async function finishExam(auto) {
+  if (!auto && Object.keys(S.queue).length) { setStatus('warn', 'Masih menyimpan jawaban, coba lagi sebentar'); flush(); return; }
+  if (!auto && !confirm('Yakin ingin menyelesaikan ujian?')) return;
+  try {
+    const r = await api(`/api/sessions/${S.sid}/finish`, { method: 'POST' });
+    if (r.ok) showResult(r.data);
+  } catch (e) { setStatus('warn', 'Menyambungkan ulang...'); }
+}
+
+function showResult(d) {
+  clearInterval(S.timer); clearInterval(S.beat);
+  $('#resultText').textContent = d ? `Jawaban benar: ${d.benar} dari ${d.total} soal.` : 'Ujian ini sudah selesai.';
+  show('result');
+}
+
+function goLogin(msg) {
+  clearInterval(S.timer); clearInterval(S.beat);
+  $('#err').textContent = msg || '';
+  show('login');
+}
+
+async function enterExam(user) {
+  try {
+    $('#who').textContent = `${user.nama} (${user.nim})`;
+    const ex = await api('/api/exams');
+    S.exam = ex.data[0];
+    const st = await api('/api/sessions/start', { method: 'POST', body: { exam_id: S.exam.id } });
+    S.sid = st.data.session_id;
+    const [ss, qs] = await Promise.all([api('/api/sessions/' + S.sid), api(`/api/exams/${S.exam.id}/questions`)]);
+    if (ss.data.session.status === 'finished') return showResult();
+    S.q = qs.data;
+    S.ans = ss.data.answers;                       // jawaban tersimpan di database (resume)
+    S.queue = JSON.parse(localStorage.getItem(qKey()) || '{}'); // jawaban yang belum sempat terkirim
+    Object.assign(S.ans, S.queue);
+    S.sisa = ss.data.session.sisa_detik;
+    $('#judul').textContent = S.exam.judul;
+    $('#banner').classList.add('hide');
+    show('exam');
+    render();
+    clearInterval(S.timer); clearInterval(S.beat);
+    S.timer = setInterval(tick, 1000);
+    S.beat = setInterval(sync, 5000);
+    if (Object.keys(S.queue).length) flush();
+  } catch (e) {
+    $('#banner').classList.remove('hide');
+    setTimeout(() => enterExam(user), 2000);
+  }
+}
+
+async function boot() {
+  try {
+    const r = await api('/api/me');
+    if (r.ok) enterExam(r.data); else goLogin();
+  } catch (e) {
+    $('#banner').classList.remove('hide');
+    setTimeout(boot, 2000);
+  }
+}
+
+$('#loginForm').addEventListener('submit', async (e) => {
+  e.preventDefault();
+  try {
+    const r = await api('/api/login', { method: 'POST', body: { nim: $('#nim').value.trim(), password: $('#pw').value } });
+    if (r.ok) { $('#err').textContent = ''; enterExam(r.data); }
+    else $('#err').textContent = (r.data && r.data.error) || 'Login gagal';
+  } catch (err) { $('#err').textContent = 'Server tidak merespons. Coba lagi.'; }
+});
+$('#opts').addEventListener('click', (e) => { const b = e.target.closest('.opt'); if (b) choose(S.q[S.cur].id, b.dataset.k); });
+$('#nav').addEventListener('click', (e) => { const b = e.target.closest('.n'); if (b) { S.cur = +b.dataset.i; render(); } });
+$('#prev').onclick = () => { if (S.cur > 0) { S.cur--; render(); } };
+$('#next').onclick = () => { if (S.cur < S.q.length - 1) { S.cur++; render(); } };
+$('#finish').onclick = () => finishExam(false);
+$('#logout').onclick = async () => { try { await api('/api/logout', { method: 'POST' }); } catch (e) {} goLogin(); };
+boot();
+</script>
+</body>
+</html>

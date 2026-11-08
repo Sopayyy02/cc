@@ -1,0 +1,14 @@
+node_modules
+npm-debug.log
+.env
+.git
+.gitignore
+backups
+*.zip
+README.md
+docker-compose.yml
+infra
+loadtest
+scripts
+**/.terraform
+**/*.tfstate*

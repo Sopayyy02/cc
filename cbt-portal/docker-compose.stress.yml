@@ -1,0 +1,64 @@
+# Override untuk stress test (Pertemuan 3):
+#   1. Melonggarkan rate limit gateway (semua VU dari 1 IP).
+#   2. Naikkan CPU limit auth-service (bcrypt CPU-intensive).
+#   3. Naikkan DB pool & CPU untuk session-service (1000 VU autosave bersamaan).
+#   4. Cache soal & replika exam-service dinaikkan.
+#   5. MySQL write buffer & max-connections dioptimasi untuk disk I/O concurrent tinggi.
+# Jalankan:
+#   docker compose -f docker-compose.yml -f docker-compose.stress.yml up -d --build --scale auth-service=4 --scale session-service=6 --scale exam-service=2
+# Kembali normal:  docker compose up -d   (tanpa file override)
+services:
+  gateway:
+    volumes:
+      - ./gateway/nginx-stress.conf:/etc/nginx/nginx.conf:ro
+      - ./gateway/limits-stress.conf:/etc/nginx/conf.d/00-limits.conf:ro
+      - ./gateway/gateway.conf:/etc/nginx/conf.d/default.conf:ro
+
+  auth-service:
+    healthcheck:
+      disable: true
+    environment:
+      DB_POOL: "20"
+    deploy:
+      resources:
+        limits:
+          cpus: "1.5"
+          memory: 384M
+
+  session-service:
+    healthcheck:
+      disable: true
+    environment:
+      DB_POOL: "30"
+    deploy:
+      resources:
+        limits:
+          cpus: "1.5"
+          memory: 384M
+
+  exam-service:
+    healthcheck:
+      disable: true
+    environment:
+      DB_POOL: "15"
+    deploy:
+      resources:
+        limits:
+          cpus: "1.0"
+          memory: 256M
+
+  # MySQL: skip binlog, disable doublewrite, flush log per detik (commit=2) agar disk I/O Windows tidak bottleneck saat 1000 VU
+  mysql:
+    command:
+      - --character-set-server=utf8mb4
+      - --collation-server=utf8mb4_unicode_ci
+      - --skip-log-bin
+      - --sync-binlog=0
+      - --innodb-flush-log-at-trx-commit=2
+      - --innodb-doublewrite=0
+      - --innodb-buffer-pool-size=512M
+      - --innodb-log-buffer-size=64M
+      - --max-connections=1000
+      - --innodb-read-io-threads=8
+      - --innodb-write-io-threads=8
+      - --table-open-cache=2000

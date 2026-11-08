@@ -73,6 +73,8 @@ async function run() {
              { status: 200, body: { status: 'finished', benar: 1, total: 10 } }];
   const before = calls.length;
   await evalIn('finishExam(true)');
+  // finishExam schedules flush but does not await it: let its promise settle.
+  await new Promise((resolve) => setImmediate(resolve));
   assert.equal(calls.length, before + 1, 'Auto finish must send pending PUT first');
   assert.equal(calls.at(-1).method, 'PUT');
   assert.equal(evalIn('Object.keys(S.queue).length'), 0);

@@ -97,6 +97,12 @@ export default function () {
   const write = call('PUT', '/api/sessions/' + sid + '/answers',
     { question_id: qid, pilihan }, 'burst_autosave', 'burst');
   const saved = write.status === 200 && parseJson(write)?.status === 'saved';
+  if (!saved && exec.vu.idInTest <= 5) {
+    // Report HTTP code + short API error only. Never log session cookies.
+    const err = parseJson(write);
+    const reason = typeof err?.error === 'string' ? err.error.slice(0, 160) : 'no structured API error';
+    console.error(`[CBT AUTOSAVE] ${nim} HTTP ${write.status}: ${reason}`);
+  }
   submitOk.add(saved);
 
   // The GET handler fetches persisted MySQL rows, so this tests real readback

@@ -7,7 +7,7 @@ WORKDIR /app
 
 # Dependency dulu supaya layer ini ter-cache selama package.json tidak berubah
 COPY package*.json ./
-RUN npm install --omit=dev && npm cache clean --force
+RUN npm ci --omit=dev && npm cache clean --force
 
 COPY src ./src
 COPY db ./db

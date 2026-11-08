@@ -5,37 +5,19 @@ const { createApp, wrap, auth, callService, start } = require('../../shared/comm
 const EXAM_URL = process.env.EXAM_SERVICE_URL || 'http://exam-service:3000';
 const { app, pool } = createApp('session');
 
-// Cache metadata sesi agar autosave berulang tidak perlu query JOIN exam_sessions & exams di setiap request.
-const sessionMetaCache = new Map();
-
-// Sisa waktu dihitung di database saat fetch pertama, lalu dihitung di memori
 async function ownSession(id, studentId) {
-  const cacheKey = `${id}:${studentId}`;
-  const c = sessionMetaCache.get(cacheKey);
-  if (c && Date.now() - c.at < 60000) {
-    const sisa = Math.floor(c.durasi_detik - (Date.now() - c.started_at_ms) / 1000);
-    return { id: +id, exam_id: c.exam_id, status: c.status, sisa };
-  }
-
-  const [r] = await pool.query(
-    `SELECT s.id, s.exam_id, s.status, s.started_at, e.durasi_menit
-       FROM exam_sessions s JOIN exams e ON e.id = s.exam_id
-      WHERE s.id = ? AND s.student_id = ?`, [id, studentId]);
-  if (!r[0]) return null;
-
-  const row = r[0];
-  const started_at_ms = new Date(row.started_at).getTime();
-  const durasi_detik = row.durasi_menit * 60;
-  sessionMetaCache.set(cacheKey, {
-    exam_id: row.exam_id,
-    started_at_ms,
-    durasi_detik,
-    status: row.status,
-    at: Date.now(),
-  });
-
-  const sisa = Math.floor(durasi_detik - (Date.now() - started_at_ms) / 1000);
-  return { id: row.id, exam_id: row.exam_id, status: row.status, sisa };
+  // Query the authoritative session state on every request.
+  // A replica-local cache could show "ongoing" for 60s after another
+  // replica finishes an exam, causing stale timers/resume information.
+  const [rows] = await pool.query(
+    `SELECT s.id, s.exam_id, s.status,
+            GREATEST(0, TIMESTAMPDIFF(SECOND, CURRENT_TIMESTAMP,
+              TIMESTAMPADD(MINUTE, e.durasi_menit, s.started_at))) AS sisa
+       FROM exam_sessions AS s JOIN exams AS e ON e.id = s.exam_id
+      WHERE s.id = ? AND s.student_id = ?`,
+    [id, studentId],
+  );
+  return rows[0] || null;
 }
 
 // CATATAN (prinsip stateless): ini BUKAN data ujian/sesi, hanya cache daftar id soal yang
@@ -146,11 +128,9 @@ app.put('/api/sessions/:id/answers', auth, wrap(async (req, res) => {
 // Idempotent: status diubah hanya jika masih 'ongoing', jadi aman di-retry
 // bila Exam Service gagal merespons saat penilaian.
 app.post('/api/sessions/:id/finish', auth, wrap(async (req, res) => {
-  sessionMetaCache.delete(`${req.params.id}:${req.session.studentId}`);
   const s = await ownSession(req.params.id, req.session.studentId);
   if (!s) return res.status(404).json({ error: 'sesi tidak ditemukan' });
   await pool.query("UPDATE exam_sessions SET status = 'finished', finished_at = NOW() WHERE id = ? AND status = 'ongoing'", [s.id]);
-  sessionMetaCache.delete(`${req.params.id}:${req.session.studentId}`);
   const [a] = await pool.query('SELECT question_id, pilihan FROM answers WHERE session_id = ?', [s.id]);
   const answers = {};
   a.forEach((x) => { answers[x.question_id] = x.pilihan; });

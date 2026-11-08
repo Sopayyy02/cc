@@ -3,9 +3,9 @@
 ## Target
 | Parameter | Target | Cara dipenuhi |
 |---|---|---|
-| RPO (jawaban terkonfirmasi) | 0 (tidak boleh hilang) | Autosave per klik, commit langsung ke MySQL (`innodb-flush-log-at-trx-commit=1`), volume persisten |
+| RPO (jawaban terkonfirmasi) | Target 0 untuk crash proses yang telah ACK | Autosave commit ke MySQL (`innodb-flush-log-at-trx-commit=1`); tetap perlu uji pemulihan dan replika/offsite untuk bencana host |
 | RPO (bencana data/host hilang) | maks. 15 menit | `mysqldump` berkala ke `backups/` |
-| RTO backend | maks. 2 menit | `restart: always` + healthcheck + `depends_on: service_healthy` |
+| RTO backend | Target maks. 2 menit | `restart: always` + healthcheck + tes recovery; belum terbukti untuk semua jenis kegagalan |
 
 ## Skenario dan penanganan
 | Skenario | Dampak | Pemulihan |
@@ -31,3 +31,5 @@ karena folder ini masih berada pada host yang sama.
 2. `./scripts/test-recovery.sh session-service` (atau `auth-service`, `exam-service`).
 3. Catat waktu pulih yang dilaporkan (harus <= 120 detik) sebagai bukti NFR-03.
 4. Uji restore: `./scripts/backup.sh`, ubah/hapus data uji, `./scripts/restore.sh <berkas>`, cek data kembali.
+
+**Penting:** Restore sekarang memverifikasi integritas gzip dan footer mysqldump **sebelum** menghapus database aktif. Lakukan backup offsite dan tes restore berkala. Lihat [full audit](AUDIT_FULL_2026-11-08.md) untuk risiko DRP yang belum selesai.

@@ -163,3 +163,10 @@ GET database. Jika tes Node lulus sedangkan 1.000 k6 VU gagal, periksa RAM
 dan CPU load generator. Dokumentasi lebih detail: [grafana-1000.md](docs/grafana-1000.md).
 
 Jangan menjalankan load test ke web Quick Tunnel atau ujian produksi.
+
+
+## E. Full audit dan CI regresi
+
+Baca [AUDIT_FULL_2026-11-08.md](docs/AUDIT_FULL_2026-11-08.md) untuk temuan P0/P1/P2, bukti CI, serta risiko AWS/Cloudflare yang masih terbuka. Script reset `npm run reset:loadtest` sekarang **hanya** menargetkan akun dummy NIM `LT[0-9]{4,}`, tidak lagi menghapus jawaban peserta lain.
+
+Benchmark MySQL 1.000 jawaban secara opt-in tersedia melalui [GitHub Actions manual](https://github.com/Sopayyy02/cc/actions/workflows/cbt-1000-benchmark.yml) beserta artifact bukti hasil dan diagnostik. Cloudflare Quick Tunnel tetap khusus untuk preview, bukan uji serentak 1.000.

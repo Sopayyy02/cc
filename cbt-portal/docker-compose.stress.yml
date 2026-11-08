@@ -55,7 +55,7 @@ services:
       - --innodb-flush-log-at-trx-commit=1
       - --innodb-buffer-pool-size=512M
       - --innodb-log-buffer-size=64M
-      - --max-connections=1000
+      - --max-connections=400 # bounded pools across service replicas; raise only with measured evidence
       - --innodb-read-io-threads=8
       - --innodb-write-io-threads=8
       - --table-open-cache=2000

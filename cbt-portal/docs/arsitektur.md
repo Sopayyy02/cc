@@ -13,7 +13,7 @@ Dokumen Spesifikasi Arsitektur (Word, Pertemuan 1).
 | MySQL + tabel `sessions` | Sama. Tabel `sessions` dipakai bersama oleh ketiga service (secret sama) |
 | Backup mysqldump + cron | `scripts/backup.sh` + cron, hasil di `backups/` (lihat `docs/drp.md`) |
 
-Seluruh kebutuhan FR-01..FR-09 dan NFR-01..NFR-06 tetap dipenuhi. Skema database tidak berubah.
+Pemenuhan FR/NFR harus diverifikasi per acceptance test, bukan diasumsikan. Skema kini juga mencakup tabel login `sessions` dan indeks expiry (lihat `db/schema.sql`).
 
 ## 2. Pembagian tugas service
 
@@ -29,12 +29,13 @@ Tambahan di luar tabel API Word: `GET /healthz` (gateway), `/internal/*` antar-s
 ## 3. Prinsip ketahanan (Word bagian 3.4) dan implementasinya
 
 1. **Stateless**: tidak ada data ujian/sesi di memori proses; session login di MySQL.
-   Satu-satunya data di memori adalah cache id soal 60 detik di session-service
-   (`qCache`) - bisa dibangun ulang, hilang saat restart tanpa dampak.
+   Data ujian dan sesi yang otoritatif berada di MySQL, bukan cache replika. Cache soal/
+   ID soal hanya untuk data yang bisa dibangun ulang. Logout dan status ujian selalu
+   diverifikasi terhadap MySQL.
 2. **Autosave per klik**: `PUT /api/sessions/:id/answers`.
 3. **Idempotent write**: `INSERT ... ON DUPLICATE KEY UPDATE` + `UNIQUE (session_id, question_id)`; `finish` juga aman diulang.
 4. **Timer server**: sisa waktu dihitung SQL dari `started_at`.
-5. **Retry klien**: antrean di `localStorage`, kirim ulang tiap 2 detik.
+5. **Retry klien**: antrean di `localStorage`; 429, 5xx dan masalah jaringan mempertahankan jawaban; auto-finish menunggu konfirmasi commit. Jawaban yang terlambat setelah deadline harus ditangani pengawas.
 6. **Persisten**: volume `cbt_mysqldata`; `innodb-flush-log-at-trx-commit=1`.
 
 ## 4. Keamanan (NFR-04)
@@ -43,7 +44,7 @@ Tambahan di luar tabel API Word: `GET /healthz` (gateway), `/internal/*` antar-s
 - Kredensial (`DB_USER`, `DB_PASSWORD`, `SESSION_SECRET`, `INTERNAL_TOKEN`) hanya dari environment
   (`.env` lokal, Secrets Manager di AWS). Kode **tidak punya nilai bawaan**: service berhenti bila belum diisi.
 - `.env`, `terraform.tfvars`, dan `*.tfstate` masuk `.gitignore`; `.env.example` hanya berisi placeholder.
-- MySQL tidak dipublish ke host; hanya gateway yang membuka port.
+- MySQL tidak dipublish ke host; gateway Docker dibatasi localhost secara default `APP_BIND_IP=127.0.0.1`. Untuk jaringan lokal terpercaya dapat mengubahnya secara eksplisit.
 
 ## 5. Struktur repositori
 
@@ -61,3 +62,7 @@ cbt-portal/
   loadtest/                     k6-stress.js (1-1000 VU), k6-autoscale.js, plot_results.py
   docker-compose.yml, Dockerfile, package.json, .env.example, .gitignore, README.md
 ```
+
+## Audit terakhir
+
+[Laporan audit menyeluruh 2026-11-08](AUDIT_FULL_2026-11-08.md) mencantumkan isu yang masih terbuka sebelum pengoperasian dengan data peserta asli.

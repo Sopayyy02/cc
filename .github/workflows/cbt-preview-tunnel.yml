@@ -82,8 +82,8 @@ jobs:
           ready=0
           for attempt in $(seq 1 90); do
             gateway="$(curl --silent --output /dev/null --write-out '%{http_code}' --max-time 3 http://127.0.0.1:3000/healthz || true)"
-            protected="$(curl --silent --output /dev/null --write-out '%{http_code}' --max-time 3 http://127.0.0.1:3000/api/exams || true)"
-            if [[ "$gateway" == "200" && "$protected" == "401" ]]; then
+            backend="$(docker compose exec -T session-service node -e 'fetch("http://127.0.0.1:3000/health", {signal: AbortSignal.timeout(3000)}).then(r=>process.stdout.write(String(r.status))).catch(()=>process.stdout.write("0"))' 2>/dev/null || true)"
+            if [[ "$gateway" == "200" && "$backend" == "200" ]]; then
               ready=1
               break
             fi
@@ -172,8 +172,8 @@ jobs:
               exit 1
             fi
             # Check the application directly; the public tunnel requires interactive OTP.
-            status="$(curl --silent --output /dev/null --write-out '%{http_code}' --max-time 8 http://127.0.0.1:3000/api/exams || true)"
-            if [[ "$status" != "401" ]]; then
+            status="$(docker compose exec -T session-service node -e 'fetch("http://127.0.0.1:3000/health", {signal: AbortSignal.timeout(8000)}).then(r=>process.stdout.write(String(r.status))).catch(()=>process.stdout.write("0"))' 2>/dev/null || true)"
+            if [[ "$status" != "200" ]]; then
               failures=$(( failures + 1 ))
               echo "::warning::Health probe returned HTTP $status (consecutive failures: $failures)."
               if (( failures >= 3 )); then

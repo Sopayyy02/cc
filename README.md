@@ -12,7 +12,7 @@
 
 **CBT Portal** · Aplikasi ujian berbasis microservices dengan autosave MySQL, web UI, observability, dan pengujian beban.
 
-[**🖥️ Jalankan Lokal**](#-menjalankan-web-lokal-windows-1011) · [**🌐 Demo HTTPS / GitHub Actions**](#-preview-web-https-melalui-github-actions) · [**📈 Grafana + 1000 Pengiriman**](#-stress-test-1000-pengiriman-jawaban) · [**📚 Docs Teknis**](./cbt-portal/README.md)
+[**🛡️ Audit Menyeluruh**](./cbt-portal/docs/AUDIT_FULL_2026-11-08.md) · [**🖥️ Jalankan Lokal**](#-menjalankan-web-lokal-windows-1011) · [**🌐 Demo HTTPS / GitHub Actions**](#-preview-web-https-melalui-github-actions) · [**📈 Grafana + 1000 Pengiriman**](#-stress-test-1000-pengiriman-jawaban) · [**🧪 Benchmark MySQL di Actions**](https://github.com/Sopayyy02/cc/actions/workflows/cbt-1000-benchmark.yml) · [**📚 Docs Teknis**](./cbt-portal/README.md)
 
 </div>
 
@@ -156,6 +156,19 @@ Tafsirkan **429** sebagai rate limit Nginx, **401** sebagai masalah sesi, **500*
 
 Baca [panduan lengkap Grafana + 1000 PUT](./cbt-portal/docs/grafana-1000.md) dan [dokumentasi stress test bertahap](./cbt-portal/docs/stress-test.md).
 
+### Reset data pengujian yang aman
+
+`npm run reset:loadtest` hanya menghapus sesi ujian dan jawaban akun uji
+berformat `LT0001` dan seterusnya. **Tidak menghapus jawaban peserta lainnya
+atau seluruh tabel `sessions`.** Hindari menjalankan reset ketika pengguna
+dengan NIM `LTdddd` adalah peserta sungguhan; prefix itu harus khusus test.
+
+Jalankan benchmark MySQL 1.000 pengiriman terpisah melalui
+[CBT 1000-Answer Real MySQL Benchmark](https://github.com/Sopayyy02/cc/actions/workflows/cbt-1000-benchmark.yml).
+Workflow ini menguji stack Docker di runner GitHub, bukan melalui Quick Tunnel,
+dan mengunggah laporan JSON sebagai artifact. Kapasitas di laptop Anda masih
+harus diuji sendiri karena resource kedua mesin berbeda.
+
 ## 🔐 Keamanan dan batasan
 
 - **Jangan commit** `.env`, token, password, atau data peserta asli.
@@ -163,6 +176,9 @@ Baca [panduan lengkap Grafana + 1000 PUT](./cbt-portal/docs/grafana-1000.md) dan
 - Database MySQL tidak diekspos ke port publik.
 - Mode `docker-compose.stress.yml` khusus lingkungan uji; jangan pakai di sistem ujian produksi tanpa pengamanan dan pemantauan.
 - GitHub-hosted runner memiliki batas durasi, kuota, dan resource; bukan pengganti layanan hosting permanen.
+
+Untuk hasil audit P0/P1/P2 yang belum selesai, lihat
+**[Laporan audit lengkap](./cbt-portal/docs/AUDIT_FULL_2026-11-08.md)**.
 
 ## 📂 Struktur repository
 

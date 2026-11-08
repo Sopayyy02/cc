@@ -47,15 +47,12 @@ services:
           cpus: "1.0"
           memory: 256M
 
-  # MySQL: skip binlog, disable doublewrite, flush log per detik (commit=2) agar disk I/O Windows tidak bottleneck saat 1000 VU
+  # Preserve exam answer durability under load: no unsafe flush/doublewrite shortcuts.
   mysql:
     command:
       - --character-set-server=utf8mb4
       - --collation-server=utf8mb4_unicode_ci
-      - --skip-log-bin
-      - --sync-binlog=0
-      - --innodb-flush-log-at-trx-commit=2
-      - --innodb-doublewrite=0
+      - --innodb-flush-log-at-trx-commit=1
       - --innodb-buffer-pool-size=512M
       - --innodb-log-buffer-size=64M
       - --max-connections=1000

@@ -91,3 +91,11 @@ Catatan: NAT Gateway, ALB, VPC Link dan RDS berbayar per jam; untuk demo cukup `
 ## C. Tanpa Docker
 
 `npm install`, `npm run setup`, lalu jalankan `npm run start:auth`, `start:exam`, `start:session` (3 terminal; isi `EXAM_SERVICE_URL=http://localhost:3002`). Frontend & routing butuh gateway, jadi cara ini hanya untuk uji API.
+
+
+### Grafana/k6: burst 1,000 jawaban dan verifikasi MySQL
+
+Gunakan [panduan Grafana burst 1.000](docs/grafana-1000.md) untuk menyiapkan
+1.000 akun dummy dan mengukur 1.000 autosave PUT pada detik yang sama.
+Skrip memeriksa jawaban melalui GET setelah ACK, bukan hanya HTTP 200.
+Mode classroom dengan NAT sekolah bersifat opt-in; produksi tetap rate-limited.

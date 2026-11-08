@@ -1,0 +1,5 @@
+# Optional profile for trusted school LAN behind a shared NAT.
+services:
+  gateway:
+    volumes:
+      - ./gateway/limits-classroom.conf:/etc/nginx/conf.d/00-limits.conf:ro

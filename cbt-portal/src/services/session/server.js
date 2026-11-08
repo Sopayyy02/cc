@@ -57,21 +57,15 @@ async function questionIds(examId) {
   }
 }
 
-// In-memory cache sesi start agar VU retry/bootstrap tidak query berulang
-const startCache = new Map();
-// In-memory cache jawaban untuk dedup autosave & mempercepat resume
-const answersCache = new Map();
+// Autosave ACKs and exam-start decisions must never depend on replica-local caches.
 
 app.post('/api/sessions/start', auth, wrap(async (req, res) => {
   const examId = +(req.body || {}).exam_id;
-  const key = `${req.session.studentId}:${examId}`;
-  const cachedSid = startCache.get(key);
-  if (cachedSid) return res.json({ session_id: cachedSid });
+  if (!Number.isSafeInteger(examId) || examId <= 0) return res.status(400).json({ error: 'exam_id tidak valid' });
 
   await pool.query('INSERT IGNORE INTO exam_sessions (student_id, exam_id) VALUES (?, ?)', [req.session.studentId, examId]);
   const [r] = await pool.query('SELECT id FROM exam_sessions WHERE student_id = ? AND exam_id = ?', [req.session.studentId, examId]);
   if (!r[0]) return res.status(404).json({ error: 'ujian tidak ditemukan' });
-  startCache.set(key, r[0].id);
   res.json({ session_id: r[0].id });
 }));
 
@@ -82,7 +76,6 @@ app.get('/api/sessions/:id', auth, wrap(async (req, res) => {
   const answers = {};
   a.forEach((x) => {
     answers[x.question_id] = x.pilihan;
-    answersCache.set(`${s.id}:${x.question_id}`, x.pilihan);
   });
   res.json({
     session: { id: s.id, exam_id: s.exam_id, status: s.status, sisa_detik: Math.max(0, s.sisa) },
@@ -100,16 +93,34 @@ app.put('/api/sessions/:id/answers', auth, wrap(async (req, res) => {
   const qid = +question_id;
   if (!(await questionIds(s.exam_id)).has(qid)) return res.status(404).json({ error: 'soal tidak ditemukan' });
   
-  const ansKey = `${s.id}:${qid}`;
-  if (answersCache.get(ansKey) === pilihan) {
-    return res.json({ status: 'saved', question_id: qid, saved_at: new Date().toISOString() });
-  }
-
-  await pool.query(
-    `INSERT INTO answers (session_id, question_id, pilihan) VALUES (?, ?, ?)
+  // This SQL write is the authority across every replica: the student must
+  // still own an ongoing exam, and the timer must still be running.
+  // Never ACK using an in-memory choice: another replica might have changed it.
+  const [write] = await pool.query(
+    `INSERT INTO answers (session_id, question_id, pilihan)
+     SELECT es.id, ?, ?
+       FROM exam_sessions AS es
+       JOIN exams AS e ON e.id = es.exam_id
+      WHERE es.id = ? AND es.student_id = ? AND es.status = 'ongoing'
+        AND TIMESTAMPADD(MINUTE, e.durasi_menit, es.started_at) > CURRENT_TIMESTAMP
      ON DUPLICATE KEY UPDATE pilihan = VALUES(pilihan), saved_at = CURRENT_TIMESTAMP(3)`,
-    [s.id, qid, pilihan]);
-  answersCache.set(ansKey, pilihan);
+    [qid, pilihan, s.id, req.session.studentId]);
+
+  // MySQL reports affectedRows=0 if a duplicate update is a true no-op
+  // (same choice and timestamp millisecond). Recheck that rare case so a
+  // valid retry is not incorrectly rejected while a finished exam stays closed.
+  if (write.affectedRows === 0) {
+    const [existing] = await pool.query(
+      `SELECT 1 AS accepted FROM answers a
+       JOIN exam_sessions es ON es.id = a.session_id
+       JOIN exams e ON e.id = es.exam_id
+       WHERE a.session_id = ? AND a.question_id = ? AND a.pilihan = ?
+         AND es.student_id = ? AND es.status = 'ongoing'
+         AND TIMESTAMPADD(MINUTE, e.durasi_menit, es.started_at) > CURRENT_TIMESTAMP
+       LIMIT 1`,
+      [s.id, qid, pilihan, req.session.studentId]);
+    if (!existing.length) return res.status(409).json({ error: 'ujian_sudah_berakhir_atau_jawaban_berubah' });
+  }
   res.json({ status: 'saved', question_id: qid, saved_at: new Date().toISOString() });
 }));
 

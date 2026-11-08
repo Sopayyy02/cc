@@ -49,6 +49,10 @@ flowchart LR
 
 > **Penting:** angka **1.000** adalah *target pengujian*, bukan klaim kapasitas yang sudah terbukti. Keberhasilan harus diperiksa dari HTTP 200, p95/p99, dan jawaban yang benar-benar tersimpan di MySQL.
 
+## 🪟 Instalasi staging pada Windows Server
+
+Windows Server 2019/2022/2025: gunakan **Hyper-V + Ubuntu Server VM + Docker Engine** (Docker Desktop tidak mendukung Windows Server). [Panduan instalasi Windows Server, akses LAN, Grafana dan benchmark 1000 jawaban](./cbt-portal/docs/WINDOWS_SERVER_STAGING.md).
+
 ## 🖥️ Menjalankan web lokal (Windows 10/11)
 
 Persyaratan: **Docker Desktop (WSL2)**, Git, dan PowerShell. Jalankan:

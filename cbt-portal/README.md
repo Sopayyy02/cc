@@ -24,6 +24,8 @@ Browser
 
 Stabilitas antar-service: semua instance stateless (sesi di MySQL), health check `/health`, retry + timeout pada pemanggilan internal, `proxy_next_upstream` di gateway, `finish` bersifat idempoten (aman diulang), cache id soal saat exam-service sempat down, graceful shutdown (SIGTERM), `keepAliveTimeout` > idle timeout ALB.
 
+> **Windows Server:** lihat [panduan Hyper-V + Ubuntu VM](docs/WINDOWS_SERVER_STAGING.md). Docker Desktop tidak didukung di Windows Server.
+
 ## A. Menjalankan lokal (Docker Compose)
 
 1. `cp .env.example .env` (Windows CMD: `copy .env.example .env`), ubah password/secret.

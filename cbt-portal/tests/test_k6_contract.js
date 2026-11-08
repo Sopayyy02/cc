@@ -24,10 +24,11 @@ let putCount = 0;
 let getCount = 0;
 const firstRejectedVU = 337;
 
-function executeVu(vu, reject = false) {
+function executeVu(vu, reject = false, expired = false) {
   let now = targetTime - 1000;
   let student = null;
   let sid = null;
+  let sessionReads = 0;
   const DateMock = class extends Date { static now() { return now; } };
   const http = {
     request(method, url, body) {
@@ -57,6 +58,10 @@ function executeVu(vu, reject = false) {
         return reply(200, { status: 'saved' });
       }
       if (method === 'GET' && endpoint === `/api/sessions/${sid}`) {
+        sessionReads++;
+        if (sessionReads === 1) {
+          return reply(200, { session: { status: 'ongoing', sisa_detik: expired ? 0 : 1800 }, answers: {} });
+        }
         getCount++;
         return reply(200, { answers: data.get(sid) || {} });
       }
@@ -107,5 +112,12 @@ assert.equal(metrics.get('burst_warmup_ok').filter(Boolean).length, 1000);
 assert.equal(metrics.get('burst_on_time').filter(Boolean).length, 1000);
 assert.equal(metrics.get('burst_submit_ok').filter(Boolean).length, 999);
 assert.equal(metrics.get('burst_verify_ok').filter(Boolean).length, 999);
+// Expired synthetic exam sessions must be rejected before waiting for the
+// scheduled burst, instead of generating 1000 predictable autosave 403s.
+const beforeExpiredPut = putCount;
+executeVu(1001, false, true);
+assert.equal(putCount, beforeExpiredPut, 'Expired exam must not submit a PUT');
+assert.equal(metrics.get('burst_warmup_ok').at(-1), false,
+  'Expired session must fail the preflight readiness metric');
 console.log('PASS k6 contract: 1,000 distinct synthetic VUs, 1,000 PUTs, 1,000 readback attempts; injected failure correctly reported.');
 console.log('NOTE: These mocks are NOT a live concurrent load test of the Docker/MySQL stack.');

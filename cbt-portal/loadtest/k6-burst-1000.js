@@ -85,6 +85,24 @@ export default function () {
     warmupOk.add(false); onTime.add(false); submitOk.add(false); verifyOk.add(false);
     return;
   }
+  // A previous test may have created the same LT0001...LT1000 exam
+  // sessions hours ago. /start is idempotent and does NOT reset started_at.
+  // Fail during warmup rather than waiting seven minutes to get 1000 x 403.
+  const statusResponse = call('GET', '/api/sessions/' + sid, null, 'session_preflight', 'warmup');
+  const state = parseJson(statusResponse)?.session;
+  const secondsUntilBurst = Math.max(0, (BURST_AT - Date.now()) / 1000);
+  const hasTime = statusResponse.status === 200 && state?.status === 'ongoing' &&
+    Number(state?.sisa_detik) > secondsUntilBurst + 10;
+  if (!hasTime) {
+    if (exec.vu.idInTest <= 5) {
+      console.error(`[CBT PREFLIGHT] ${nim} session HTTP ${statusResponse.status}; ` +
+        `state=${state?.status || 'unknown'}; remaining=${state?.sisa_detik ?? '?'}s; ` +
+        `burst_in=${Math.round(secondsUntilBurst)}s. ` +
+        'For disposable LT accounts only, run the scoped load-test reset.');
+    }
+    warmupOk.add(false); onTime.add(false); submitOk.add(false); verifyOk.add(false);
+    return;
+  }
   warmupOk.add(true);
 
   const qid = qs[0].id;

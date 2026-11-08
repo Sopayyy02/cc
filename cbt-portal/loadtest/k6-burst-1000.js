@@ -54,6 +54,13 @@ export default function () {
   const login = call('POST', '/api/login',
     { nim, password: __ENV.LOADTEST_PASSWORD || 'password123' }, 'login', 'warmup');
   if (login.status !== 200) {
+    // Limit output to the first five synthetic users; avoid dumping 1000
+    // failures or exposing passwords/session cookies in CI logs.
+    if (exec.vu.idInTest <= 5) {
+      const detail = parseJson(login);
+      const reason = typeof detail?.error === 'string' ? detail.error.slice(0, 180) : 'non-JSON/empty error';
+      console.error(`[CBT PREFLIGHT] ${nim} login HTTP ${login.status}: ${reason} (BASE_URL=${BASE})`);
+    }
     warmupOk.add(false); onTime.add(false); submitOk.add(false); verifyOk.add(false);
     return;
   }
